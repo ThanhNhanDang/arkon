@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.database.models import Employee, Project, ProjectMember, ProjectSource, Source
+from app.database.models import Employee, Project, ProjectMember, ProjectSource, ScopeMembership, ScopeRole, ScopeType, Source
 from app.services.auth_service import get_current_user, require_admin, require_permission
 
 router = APIRouter()
@@ -29,18 +29,21 @@ router = APIRouter()
 class ProjectCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    workspace_type: Optional[str] = "project"  # "project" or "customer"
 
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None  # "active" or "archived"
+    workspace_type: Optional[str] = None  # "project" or "customer"
 
 
 class ProjectOut(BaseModel):
     id: str
     name: str
     description: Optional[str]
+    workspace_type: str = "project"
     status: str
     member_count: int = 0
     source_count: int = 0
@@ -83,6 +86,7 @@ def _project_out(project: Project, member_count: int = 0, source_count: int = 0)
         id=str(project.id),
         name=project.name,
         description=project.description,
+        workspace_type=getattr(project, 'workspace_type', 'project') or 'project',
         status=project.status,
         member_count=member_count,
         source_count=source_count,
@@ -142,14 +146,31 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = require_permission("projects.manage"),
 ):
+    ws_type = body.workspace_type or "project"
+    if ws_type not in ("project", "customer"):
+        raise HTTPException(400, "workspace_type must be 'project' or 'customer'")
+
     project = Project(
         name=body.name,
         description=body.description,
+        workspace_type=ws_type,
         status="active",
         created_by_id=current_user.id,
     )
     db.add(project)
     await db.flush()
+
+    # Auto-create scope membership for creator as owner
+    scope_membership = ScopeMembership(
+        employee_id=current_user.id,
+        scope_type=ScopeType.PROJECT.value,
+        scope_id=project.id,
+        role=ScopeRole.OWNER.value,
+        granted_by_id=current_user.id,
+    )
+    db.add(scope_membership)
+    await db.flush()
+
     return _project_out(project)
 
 
@@ -166,6 +187,10 @@ async def update_project(
         project.name = body.name
     if body.description is not None:
         project.description = body.description
+    if body.workspace_type is not None:
+        if body.workspace_type not in ("project", "customer"):
+            raise HTTPException(400, "workspace_type must be 'project' or 'customer'")
+        project.workspace_type = body.workspace_type
     if body.status is not None:
         if body.status not in ("active", "archived"):
             raise HTTPException(400, "Status must be 'active' or 'archived'")
@@ -249,6 +274,17 @@ async def add_member(
         role=body.role,
     )
     db.add(member)
+
+    # Sync: create scope membership for the project
+    scope_role = ScopeRole.OWNER.value if body.role == "owner" else ScopeRole.CONTRIBUTOR.value
+    scope_membership = ScopeMembership(
+        employee_id=uuid.UUID(body.employee_id),
+        scope_type=ScopeType.PROJECT.value,
+        scope_id=uuid.UUID(project_id),
+        role=scope_role,
+        granted_by_id=_user.id,
+    )
+    db.add(scope_membership)
     await db.flush()
     return {"added": True}
 
@@ -267,6 +303,20 @@ async def remove_member(
     if not member:
         raise HTTPException(404, "Member not found")
     await db.delete(member)
+
+    # Sync: remove scope membership for the project
+    scope_stmt = (
+        select(ScopeMembership)
+        .where(
+            ScopeMembership.employee_id == uuid.UUID(employee_id),
+            ScopeMembership.scope_type == ScopeType.PROJECT.value,
+            ScopeMembership.scope_id == uuid.UUID(project_id),
+        )
+    )
+    scope_membership = (await db.execute(scope_stmt)).scalar_one_or_none()
+    if scope_membership:
+        await db.delete(scope_membership)
+
     return {"removed": True}
 
 

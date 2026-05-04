@@ -7,6 +7,8 @@ export type WikiPageSummary = {
   summary: string;
   knowledge_type_slugs: string[];
   source_ids: string[];
+  scope_type?: string;
+  scope_id?: string;
   version: number;
   updated_at: string;
 };

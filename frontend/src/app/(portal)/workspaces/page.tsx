@@ -20,7 +20,7 @@ export type Project = {
   created_at: string;
 };
 
-export default function ProjectsPage() {
+export default function WorkspacesPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
@@ -69,8 +69,8 @@ export default function ProjectsPage() {
   return (
     <>
       <PageHeader
-        title="Projects"
-        description="Manage cross-functional knowledge contexts for clients, initiatives, and events."
+        title="Workspaces"
+        description="Manage projects and customer engagements — each with its own team and documents."
         action={
           isAdmin ? (
             <Button
@@ -78,7 +78,7 @@ export default function ProjectsPage() {
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <span className="material-symbols-outlined text-base mr-1">add</span>
-              New Project
+              New Workspace
             </Button>
           ) : undefined
         }

@@ -11,7 +11,7 @@ import {
   SimulationNodeDatum,
   SimulationLinkDatum,
 } from "d3-force";
-import { wikiTypeColor } from "./wiki-type-badge";
+import { wikiTypeColor, wikiTypeGroupLabel, wikiTypeIcon } from "./wiki-type-badge";
 
 type GraphNode = SimulationNodeDatum & {
   slug: string;
@@ -34,14 +34,14 @@ type Props = {
   onNodeClick?: (slug: string) => void;
 };
 
-// Sahara light palette
-const BG = "#faf5ee";
-const EDGE_COLOR = "#c8b8a8";
+// --- Palette ---
+const EDGE_COLOR = "rgba(120,112,106,0.35)";
+const EDGE_HIGHLIGHT = "#c2652a";
 const LABEL_COLOR = "#3a302a";
 
 function nodeRadius(degree: number, mini: boolean): number {
-  if (mini) return Math.max(3, Math.min(6, 3 + degree * 0.5));
-  return Math.max(5, Math.min(14, 5 + degree * 0.8));
+  if (mini) return Math.max(3, Math.min(6, 3 + Math.sqrt(degree) * 1.2));
+  return Math.max(5, Math.min(18, 5 + Math.sqrt(degree) * 3));
 }
 
 export function WikiGraph({
@@ -59,7 +59,13 @@ export function WikiGraph({
   const [simNodes, setSimNodes] = React.useState<GraphNode[]>([]);
   const [simLinks, setSimLinks] = React.useState<GraphLink[]>([]);
   const [hoveredSlug, setHoveredSlug] = React.useState<string | null>(null);
-  const [tooltip, setTooltip] = React.useState<{ x: number; y: number; title: string } | null>(null);
+  const [tooltip, setTooltip] = React.useState<{
+    x: number;
+    y: number;
+    title: string;
+    type: string;
+    degree: number;
+  } | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const simulationRef = React.useRef<any>(null);
 
@@ -136,6 +142,15 @@ export function WikiGraph({
     return set;
   }, [hoveredSlug, simLinks]);
 
+  // Type counts for legend
+  const typeCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of rawNodes) {
+      counts[n.page_type] = (counts[n.page_type] ?? 0) + 1;
+    }
+    return counts;
+  }, [rawNodes]);
+
   const handleNodeClick = (slug: string) => {
     if (onNodeClick) {
       onNodeClick(slug);
@@ -147,8 +162,8 @@ export function WikiGraph({
   return (
     <div
       ref={containerRef}
-      className="relative w-full rounded-xl overflow-hidden border border-border shadow-sahara"
-      style={{ height: height ?? "100%", background: BG }}
+      className={`relative w-full overflow-hidden ${mini ? "rounded-xl border border-border" : ""}`}
+      style={{ height: height ?? "100%", background: "var(--color-background, #faf5ee)" }}
     >
       <svg
         ref={svgRef}
@@ -174,9 +189,10 @@ export function WikiGraph({
                 y1={src.y}
                 x2={tgt.x}
                 y2={tgt.y}
-                stroke={isHighlighted ? "#c2652a" : EDGE_COLOR}
-                strokeWidth={isHighlighted ? 2 : 1.5}
-                opacity={hoveredSlug ? (isHighlighted ? 0.9 : 0.2) : 0.6}
+                stroke={isHighlighted ? EDGE_HIGHLIGHT : EDGE_COLOR}
+                strokeWidth={isHighlighted ? 2.5 : 1.2}
+                opacity={hoveredSlug ? (isHighlighted ? 0.9 : 0.1) : 0.5}
+                style={{ transition: "opacity 200ms ease, stroke-width 200ms ease" }}
               />
             );
           })}
@@ -189,6 +205,7 @@ export function WikiGraph({
             const r = nodeRadius(node.degree ?? 0, mini);
             const color = wikiTypeColor(node.page_type);
             const isDimmed = hoveredSlug && !neighborSlugs?.has(node.slug);
+            const isHovered = hoveredSlug === node.slug;
             const isCenter = node.slug === centerSlug;
 
             return (
@@ -203,8 +220,10 @@ export function WikiGraph({
                   if (rect) {
                     setTooltip({
                       x: e.clientX - rect.left,
-                      y: e.clientY - rect.top - 12,
+                      y: e.clientY - rect.top - 16,
                       title: node.title,
+                      type: node.page_type,
+                      degree: node.degree ?? 0,
                     });
                   }
                 }}
@@ -213,25 +232,35 @@ export function WikiGraph({
                   setTooltip(null);
                 }}
               >
+                {/* Glow ring on hover */}
+                {isHovered && (
+                  <circle
+                    r={r * 1.8}
+                    fill={color}
+                    opacity={0.12}
+                    style={{ transition: "r 200ms ease" }}
+                  />
+                )}
                 <circle
-                  r={hoveredSlug === node.slug ? r * 1.4 : r}
+                  r={isHovered ? r * 1.3 : r}
                   fill={color}
-                  opacity={isDimmed ? 0.2 : 0.9}
-                  stroke={isCenter ? "#3a302a" : "white"}
-                  strokeWidth={isCenter ? 2 : 1}
-                  style={{ transition: "r 150ms ease, opacity 150ms ease" }}
+                  opacity={isDimmed ? 0.15 : 0.9}
+                  stroke={isCenter ? "#3a302a" : isHovered ? color : "rgba(255,255,255,0.8)"}
+                  strokeWidth={isCenter ? 2.5 : isHovered ? 2 : 1}
+                  style={{ transition: "r 200ms ease, opacity 200ms ease" }}
                 />
-                {!mini && (
+                {!mini && !isDimmed && (
                   <text
                     x={r + 5}
                     y={4}
                     fill={LABEL_COLOR}
-                    fontSize={11}
-                    opacity={isDimmed ? 0.15 : hoveredSlug === node.slug ? 1 : 0.65}
+                    fontSize={isHovered ? 12 : 11}
+                    fontWeight={isHovered ? 600 : 400}
+                    opacity={isHovered ? 1 : 0.6}
                     style={{
                       pointerEvents: "none",
                       userSelect: "none",
-                      transition: "opacity 150ms ease",
+                      transition: "opacity 200ms ease, font-size 200ms ease",
                     }}
                   >
                     {node.title.length > 24
@@ -248,17 +277,56 @@ export function WikiGraph({
       {/* Tooltip */}
       {tooltip && (
         <div
-          className="pointer-events-none z-50 px-2 py-1 rounded-md text-xs font-medium shadow-sahara"
+          className="pointer-events-none z-50 px-3 py-2 rounded-lg text-xs shadow-lg"
           style={{
             position: "absolute",
-            left: tooltip.x + 12,
-            top: tooltip.y,
-            background: "#f6f0e8",
-            color: "#3a302a",
-            border: "1px solid rgba(216,208,200,0.6)",
+            left: Math.min(tooltip.x + 12, dimensions.w - 200),
+            top: Math.max(tooltip.y - 8, 8),
+            background: "var(--color-card, #fff)",
+            color: "var(--color-foreground, #3a302a)",
+            border: "1px solid var(--color-border, rgba(216,208,200,0.6))",
+            maxWidth: 220,
           }}
         >
-          {tooltip.title}
+          <p className="font-medium text-sm mb-0.5 truncate">{tooltip.title}</p>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ background: wikiTypeColor(tooltip.type) }}
+            />
+            <span className="capitalize">{tooltip.type}</span>
+            <span className="ml-auto">{tooltip.degree} links</span>
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      {!mini && (
+        <div className="absolute bottom-3 left-3 rounded-xl border border-border bg-card/90 backdrop-blur-sm px-3 py-2.5 text-xs shadow-sm max-w-[220px]">
+          <div className="mb-1.5 font-semibold text-foreground text-xs">Node Types</div>
+          <div className="flex flex-col gap-1">
+            {Object.entries(typeCounts)
+              .sort((a, b) => b[1] - a[1])
+              .map(([type, count]) => (
+                <div
+                  key={type}
+                  className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent/30 transition-colors"
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{
+                      background: wikiTypeColor(type),
+                      boxShadow: `0 0 4px ${wikiTypeColor(type)}40`,
+                    }}
+                  />
+                  <span className="material-symbols-outlined" style={{ fontSize: 11, color: wikiTypeColor(type) }}>
+                    {wikiTypeIcon(type)}
+                  </span>
+                  <span className="text-muted-foreground">{wikiTypeGroupLabel(type)}</span>
+                  <span className="text-muted-foreground/60 ml-auto tabular-nums">{count}</span>
+                </div>
+              ))}
+          </div>
         </div>
       )}
     </div>

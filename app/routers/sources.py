@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.database.models import Employee, Source, WikiPage
+from app.database.models import Employee, Source, ScopeType, WikiPage
 from app.database.repository import Repository
 from app.services.auth_service import require_admin, require_permission
 
@@ -50,6 +50,8 @@ class SourceResponse(BaseModel):
     department_name: Optional[str] = None
     contributed_by_employee_id: Optional[uuid.UUID] = None
     contributed_by_name: Optional[str] = None
+    scope_type: str = "global"
+    scope_id: Optional[uuid.UUID] = None
     created_at: str
     updated_at: str
 
@@ -73,6 +75,8 @@ class SourceUpdate(BaseModel):
     title: Optional[str] = None
     knowledge_type_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
+    scope_type: Optional[str] = None
+    scope_id: Optional[uuid.UUID] = None
 
 
 async def _wiki_page_count(session: AsyncSession, source_id: uuid.UUID) -> int:
@@ -102,6 +106,8 @@ def _to_response(source: Source, wiki_page_count: int = 0) -> SourceResponse:
         department_name=source.department.name if source.department else None,
         contributed_by_employee_id=source.contributed_by_employee_id,
         contributed_by_name=source.contributor.name if source.contributor else None,
+        scope_type=source.scope_type or "global",
+        scope_id=source.scope_id,
         created_at=source.created_at.isoformat(),
         updated_at=source.updated_at.isoformat(),
     )
@@ -201,6 +207,8 @@ async def upload_source(
     title: Optional[str] = Form(None),
     knowledge_type_id: Optional[str] = Form(None),
     department_id: Optional[str] = Form(None),
+    scope_type: Optional[str] = Form(None),
+    scope_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     user: Employee = require_permission("kb.upload"),
 ):
@@ -218,6 +226,8 @@ async def upload_source(
         knowledge_type_id=uuid.UUID(knowledge_type_id) if knowledge_type_id else None,
         department_id=uuid.UUID(department_id) if department_id else None,
         contributed_by_employee_id=user.id,
+        scope_type=scope_type or ScopeType.GLOBAL.value,
+        scope_id=uuid.UUID(scope_id) if scope_id else None,
     )
     source = await repo.create(source)
     await db.commit()
@@ -276,6 +286,9 @@ async def add_url_source(
         knowledge_type_id=req.knowledge_type_id,
         department_id=req.department_id,
         contributed_by_employee_id=user.id,
+        # Auto-set scope based on department
+        scope_type=ScopeType.DEPARTMENT.value if req.department_id else ScopeType.GLOBAL.value,
+        scope_id=req.department_id if req.department_id else None,
     )
     source = await repo.create(source)
     await db.commit()
@@ -316,6 +329,9 @@ async def update_source(
         source.knowledge_type_id = body.knowledge_type_id
     if body.department_id is not None:
         source.department_id = body.department_id
+    if body.scope_type is not None:
+        source.scope_type = body.scope_type
+        source.scope_id = body.scope_id  # None for global
     await db.flush()
 
     source = (await db.execute(

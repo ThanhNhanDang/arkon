@@ -23,27 +23,27 @@ type NavGroup = {
 
 const navGroups: NavGroup[] = [
   {
-    id: "knowledge",
-    label: "Knowledge Base",
-    icon: "book_5",
+    id: "org-knowledge",
+    label: "Org Knowledge",
+    icon: "corporate_fare",
     items: [
       { label: "Documents", href: "/knowledge", icon: "description" },
       { label: "Wiki", href: "/wiki", icon: "auto_stories" },
     ],
   },
   {
-    id: "workspace",
-    label: "Workspace",
+    id: "workspaces",
+    label: "Workspaces",
     icon: "workspaces",
     items: [
-      { label: "Projects", href: "/projects", icon: "folder_special" },
+      { label: "Workspaces", href: "/workspaces", icon: "folder_special" },
       { label: "Contacts", href: "/contacts", icon: "contacts" },
     ],
   },
   {
     id: "organization",
     label: "Organization",
-    icon: "corporate_fare",
+    icon: "account_tree",
     adminOnly: true,
     items: [
       { label: "Departments", href: "/departments", icon: "domain" },
@@ -57,6 +57,7 @@ const navGroups: NavGroup[] = [
     icon: "tune",
     adminOnly: true,
     items: [
+      { label: "Audit Log", href: "/audit", icon: "policy" },
       { label: "Settings", href: "/settings", icon: "settings" },
     ],
   },

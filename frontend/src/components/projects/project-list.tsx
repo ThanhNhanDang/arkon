@@ -16,6 +16,7 @@ type Project = {
   id: string;
   name: string;
   description?: string;
+  workspace_type: string;
   status: string;
   member_count: number;
   source_count: number;
@@ -59,9 +60,9 @@ export function ProjectList({ projects, loading, isAdmin, onEdit, onOpen, onRefr
     return (
       <div className="bg-card rounded-xl border border-border shadow-sahara">
         <EmptyState
-          icon="folder_special"
-          title="No projects yet"
-          description="Create a project to share knowledge with a specific group of people"
+          icon="workspaces"
+          title="No workspaces yet"
+          description="Create a workspace to organize projects or customer engagements"
         />
       </div>
     );
@@ -84,23 +85,35 @@ export function ProjectList({ projects, loading, isAdmin, onEdit, onOpen, onRefr
             <div className="flex items-start justify-between gap-2">
               <div className="flex flex-col gap-1 flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-base">folder_special</span>
+                  <span className="material-symbols-outlined text-primary text-base">{project.workspace_type === 'customer' ? 'domain' : 'folder_special'}</span>
                   <h3 className="font-semibold text-sm truncate">{project.name}</h3>
                 </div>
                 {project.description && (
                   <p className="text-xs text-muted-foreground line-clamp-2">{project.description}</p>
                 )}
               </div>
-              <Badge
-                variant="outline"
-                className={
-                  project.status === "active"
-                    ? "text-green-600 border-green-300 shrink-0"
-                    : "text-muted-foreground border-muted shrink-0"
-                }
-              >
-                {project.status}
-              </Badge>
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={`text-xs shrink-0 ${
+                    project.workspace_type === "customer"
+                      ? "text-violet-600 border-violet-300"
+                      : "text-sky-600 border-sky-300"
+                  }`}
+                >
+                  {project.workspace_type === "customer" ? "Customer" : "Project"}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={
+                    project.status === "active"
+                      ? "text-green-600 border-green-300 shrink-0"
+                      : "text-muted-foreground border-muted shrink-0"
+                  }
+                >
+                  {project.status}
+                </Badge>
+              </div>
             </div>
 
             <div className="flex items-center gap-4 text-xs text-muted-foreground">

@@ -14,7 +14,12 @@
       "Bash(npm install *)",
       "Bash(rtk tsc *)",
       "Bash(rtk ls *)",
-      "Bash(rtk find *)"
+      "Bash(rtk find *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\arkon\\\\llm_wiki-main\")",
+      "Bash(Select-Object -First 20)",
+      "Bash(xargs ls *)",
+      "Bash(xargs grep *)",
+      "Bash(rtk wc *)"
     ]
   }
 }

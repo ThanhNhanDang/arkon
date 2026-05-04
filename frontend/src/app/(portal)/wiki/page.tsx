@@ -8,27 +8,31 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { WikiPageTree } from "@/components/wiki/wiki-page-tree";
 import { WikiContent } from "@/components/wiki/wiki-content";
-import { WikiTypeBadge } from "@/components/wiki/wiki-type-badge";
+import { WikiTypeBadge, wikiTypeGroupLabel } from "@/components/wiki/wiki-type-badge";
+import { ScopeBadge } from "@/components/shared/scope-badge";
 import { WikiSearchDialog } from "@/components/wiki/wiki-search-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 
+const TYPE_TABS = ["all", "entity", "concept", "topic", "source"] as const;
+
 export default function WikiIndexPage() {
   const [indexMd, setIndexMd] = React.useState<string | null>(null);
-  const [recentPages, setRecentPages] = React.useState<WikiPageSummary[]>([]);
+  const [allPages, setAllPages] = React.useState<WikiPageSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<string>("all");
 
   React.useEffect(() => {
     Promise.all([
       api<{ content_md: string }>("/api/wiki/index"),
-      api<WikiPageSummary[]>("/api/wiki/pages?limit=50"),
+      api<WikiPageSummary[]>("/api/wiki/pages?limit=200"),
     ])
       .then(([idx, pages]) => {
         setIndexMd(idx.content_md || null);
         const filtered = Array.isArray(pages)
           ? pages.filter((p) => p.page_type !== "index" && p.page_type !== "log")
           : [];
-        setRecentPages(filtered.slice(0, 6));
+        setAllPages(filtered);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -42,6 +46,23 @@ export default function WikiIndexPage() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Stats
+  const totalPages = allPages.length;
+  const typeCounts = React.useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const p of allPages) c[p.page_type] = (c[p.page_type] ?? 0) + 1;
+    return c;
+  }, [allPages]);
+  const lastUpdated = allPages[0]?.updated_at;
+
+  // Filter by tab
+  const displayPages = React.useMemo(() => {
+    const list = activeTab === "all"
+      ? allPages
+      : allPages.filter((p) => p.page_type === activeTab);
+    return list.slice(0, 24);
+  }, [allPages, activeTab]);
 
   return (
     <>
@@ -86,22 +107,83 @@ export default function WikiIndexPage() {
             </div>
           ) : indexMd ? (
             <>
+              {/* Stats bar */}
+              {totalPages > 0 && (
+                <div className="flex flex-wrap items-center gap-3 mb-8">
+                  <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-2.5 shadow-sahara">
+                    <span className="material-symbols-outlined text-base text-primary">article</span>
+                    <span className="text-sm font-semibold text-foreground">{totalPages}</span>
+                    <span className="text-xs text-muted-foreground">Pages</span>
+                  </div>
+                  {Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
+                    <div
+                      key={type}
+                      className="flex items-center gap-1.5 bg-card border border-border rounded-xl px-3 py-2.5 shadow-sahara"
+                    >
+                      <WikiTypeBadge type={type} />
+                      <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+                    </div>
+                  ))}
+                  {lastUpdated && (
+                    <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-2.5 shadow-sahara ml-auto">
+                      <span className="material-symbols-outlined text-base text-muted-foreground">schedule</span>
+                      <span className="text-xs text-muted-foreground">
+                        Updated {new Date(lastUpdated).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <WikiContent markdown={indexMd} />
-              {recentPages.length > 0 && (
+
+              {/* Pages grid */}
+              {allPages.length > 0 && (
                 <div className="mt-12">
-                  <h2 className="font-heading text-xl font-normal text-foreground mb-4 pb-2 border-b border-border">
-                    Recently Updated
-                  </h2>
+                  {/* Type tabs */}
+                  <div className="flex items-center gap-1 mb-5 border-b border-border">
+                    {TYPE_TABS.map((tab) => {
+                      const count = tab === "all"
+                        ? totalPages
+                        : typeCounts[tab] ?? 0;
+                      if (tab !== "all" && count === 0) return null;
+                      return (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveTab(tab)}
+                          className={`px-3 py-2 text-xs font-medium capitalize border-b-2 transition-colors ${
+                            activeTab === tab
+                              ? "border-primary text-primary"
+                              : "border-transparent text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {tab === "all" ? "All" : wikiTypeGroupLabel(tab)}
+                          <span className="ml-1.5 tabular-nums text-muted-foreground">
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {recentPages.map((page) => (
+                    {displayPages.map((page) => (
                       <Link
                         key={page.slug}
                         href={`/wiki/${page.slug}`}
                         className="group block bg-card border border-border rounded-xl p-4 hover:border-primary/40 hover:shadow-sahara transition-all"
                       >
                         <div className="flex items-start justify-between gap-2 mb-2">
-                          <WikiTypeBadge type={page.page_type} />
-                          <span className="text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <WikiTypeBadge type={page.page_type} />
+                            {page.scope_type && page.scope_type !== "global" && (
+                              <ScopeBadge scopeType={page.scope_type} scopeId={page.scope_id} />
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground shrink-0">
                             v{page.version}
                           </span>
                         </div>

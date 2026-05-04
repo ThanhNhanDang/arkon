@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,11 +13,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
+import { WikiTypeBadge } from "@/components/wiki/wiki-type-badge";
+import { ScopeBadge } from "@/components/shared/scope-badge";
+import { WikiPageSummary } from "@/types/wiki";
 
 type Project = {
   id: string;
   name: string;
   description?: string;
+  workspace_type: string;
   status: string;
   member_count: number;
   source_count: number;
@@ -66,7 +71,9 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [selectedSourceId, setSelectedSourceId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"members" | "sources">("members");
+  const [tab, setTab] = useState<"members" | "sources" | "wiki">("members");
+  const [wikiPages, setWikiPages] = useState<WikiPageSummary[]>([]);
+  const [wikiLoading, setWikiLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -94,6 +101,26 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
       }).catch(() => {});
     }
   }, [load, isAdmin]);
+
+  // Load wiki pages scoped to this workspace
+  useEffect(() => {
+    if (tab !== "wiki") return;
+    setWikiLoading(true);
+    api<WikiPageSummary[]>("/api/wiki/pages?limit=100")
+      .then((pages) => {
+        // Filter pages by workspace scope
+        const filtered = (Array.isArray(pages) ? pages : []).filter(
+          (p) =>
+            p.page_type !== "index" &&
+            p.page_type !== "log" &&
+            p.scope_type === "workspace" &&
+            p.scope_id === project.id
+        );
+        setWikiPages(filtered);
+      })
+      .catch(() => setWikiPages([]))
+      .finally(() => setWikiLoading(false));
+  }, [tab, project.id]);
 
   const handleAddMember = async () => {
     if (!selectedEmpId) return;
@@ -162,7 +189,7 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
         </Button>
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">folder_special</span>
+            <span className="material-symbols-outlined text-primary">{project.workspace_type === 'customer' ? 'domain' : 'folder_special'}</span>
             <h1 className="text-2xl font-semibold font-serif">{project.name}</h1>
             <Badge
               variant="outline"
@@ -186,7 +213,7 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-border">
-        {(["members", "sources"] as const).map((t) => (
+        {(["members", "sources", "wiki"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -196,7 +223,11 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {t === "members" ? `Members (${members.length})` : `Documents (${sources.length})`}
+            {t === "members"
+              ? `Members (${members.length})`
+              : t === "sources"
+              ? `Documents (${sources.length})`
+              : `Wiki (${wikiPages.length})`}
           </button>
         ))}
       </div>
@@ -316,6 +347,65 @@ export function ProjectDetail({ project, isAdmin, onBack }: Props) {
                     )}
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Wiki tab */}
+      {tab === "wiki" && (
+        <div className="flex flex-col gap-4">
+          {wikiLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="bg-card rounded-xl border border-border p-4 space-y-3"
+                >
+                  <div className="h-5 w-20 rounded bg-muted animate-pulse" />
+                  <div className="h-5 w-3/4 rounded bg-muted animate-pulse" />
+                  <div className="h-4 w-full rounded bg-muted animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ) : wikiPages.length === 0 ? (
+            <div className="bg-card rounded-xl border border-border shadow-sahara">
+              <EmptyState
+                icon="auto_stories"
+                title="No wiki pages yet"
+                description="Compile documents in this workspace to generate wiki pages."
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {wikiPages.map((page) => (
+                <Link
+                  key={page.slug}
+                  href={`/wiki/${page.slug}`}
+                  className="group block bg-card border border-border rounded-xl p-4 hover:border-primary/40 hover:shadow-sahara transition-all"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <WikiTypeBadge type={page.page_type} />
+                      <ScopeBadge scopeType="workspace" />
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      v{page.version}
+                    </span>
+                  </div>
+                  <h3 className="font-heading text-base font-normal text-foreground group-hover:text-primary transition-colors mb-1">
+                    {page.title}
+                  </h3>
+                  {page.summary && (
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {page.summary}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-3">
+                    {new Date(page.updated_at).toLocaleDateString()}
+                  </p>
+                </Link>
               ))}
             </div>
           )}

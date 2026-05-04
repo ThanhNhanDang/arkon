@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { apiUpload } from "@/lib/api";
+import { useState, useEffect } from "react";
+import { api, apiUpload } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,9 +42,18 @@ type Props = {
 export function UploadDialog({ open, onOpenChange, types, departments, onUploaded }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [typeId, setTypeId] = useState("");
-  const [deptId, setDeptId] = useState("");
+  const [scopeType, setScopeType] = useState("global");
+  const [scopeId, setScopeId] = useState("");
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    api<{ id: string; name: string }[]>("/api/projects")
+      .then((data) => setProjects(Array.isArray(data) ? data : []))
+      .catch(() => setProjects([]));
+  }, [open]);
 
   const handleUpload = async () => {
     if (!file) return;
@@ -55,14 +64,19 @@ export function UploadDialog({ open, onOpenChange, types, departments, onUploade
       const formData = new FormData();
       formData.append("file", file);
       if (typeId) formData.append("knowledge_type_id", typeId);
-      if (deptId) formData.append("department_id", deptId);
+      
+      formData.append("scope_type", scopeType);
+      if (scopeType !== "global" && scopeId) {
+        formData.append("scope_id", scopeId);
+      }
 
       await apiUpload("/api/sources/upload", formData);
       onUploaded();
       onOpenChange(false);
       setFile(null);
       setTypeId("");
-      setDeptId("");
+      setScopeType("global");
+      setScopeId("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -122,23 +136,84 @@ export function UploadDialog({ open, onOpenChange, types, departments, onUploade
             </Select>
           </div>
 
-          {/* Department */}
+          {/* Visibility / Scope */}
           <div className="flex flex-col gap-2">
-            <Label>Department</Label>
-            <Select value={deptId} onValueChange={(v) => setDeptId(v ?? "")}>
+            <Label>Visibility</Label>
+            <Select value={scopeType} onValueChange={(v) => {
+              const val = v ?? "global";
+              setScopeType(val);
+              if (val === "global") setScopeId("");
+            }}>
               <SelectTrigger className="bg-background">
-                <span>{deptId ? (departments.find(d => d.id === deptId)?.name ?? "Select department (optional)") : "Select department (optional)"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                    {scopeType === "global" ? "public" : scopeType === "department" ? "domain" : "folder_special"}
+                  </span>
+                  <span className="capitalize">{scopeType === "project" ? "Workspace" : scopeType}</span>
+                </div>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">None</SelectItem>
-                {departments.map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="global">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>public</span>
+                    Global (All employees)
+                  </div>
+                </SelectItem>
+                <SelectItem value="department">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>domain</span>
+                    Department
+                  </div>
+                </SelectItem>
+                <SelectItem value="project">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>folder_special</span>
+                    Workspace
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Restrict access or leave as Global to make it readable by everyone.
+            </p>
           </div>
+
+          {/* Scope entity picker */}
+          {scopeType === "department" && (
+            <div className="flex flex-col gap-1.5">
+              <Label>Target Department</Label>
+              <Select value={scopeId} onValueChange={(v) => setScopeId(v ?? "")}>
+                <SelectTrigger className="bg-background">
+                  <span>{scopeId ? (departments.find(d => d.id === scopeId)?.name ?? "Select...") : "Select department..."}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {scopeType === "project" && (
+            <div className="flex flex-col gap-1.5">
+              <Label>Target Workspace</Label>
+              <Select value={scopeId} onValueChange={(v) => setScopeId(v ?? "")}>
+                <SelectTrigger className="bg-background">
+                  <span>{scopeId ? (projects.find(p => p.id === scopeId)?.name ?? "Select...") : "Select workspace..."}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {error && (
             <p className="text-destructive text-sm bg-destructive/10 px-3 py-2 rounded-lg">

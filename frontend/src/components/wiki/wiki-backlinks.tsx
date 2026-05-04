@@ -3,14 +3,14 @@
 import React from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { WikiGraphData } from "@/types/wiki";
+import { WikiGraphData, WikiPageDetail } from "@/types/wiki";
 import { WikiGraphMini } from "./wiki-graph";
+import { WikiTypeBadge } from "./wiki-type-badge";
+import { ScopeBadge } from "@/components/shared/scope-badge";
 
 type Props = {
   slug: string;
-  backlinks: string[];
-  outlinks: string[];
-  sourceIds: string[];
+  page: WikiPageDetail;
 };
 
 function LinkItem({
@@ -40,14 +40,16 @@ function Section({
   title,
   icon,
   count,
+  defaultOpen = true,
   children,
 }: {
   title: string;
   icon: string;
   count: number;
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = React.useState(true);
+  const [open, setOpen] = React.useState(defaultOpen);
   if (count === 0) return null;
   return (
     <div>
@@ -67,7 +69,7 @@ function Section({
   );
 }
 
-export function WikiBacklinks({ slug, backlinks, outlinks, sourceIds }: Props) {
+export function WikiSidebarRight({ slug, page }: Props) {
   const [graphData, setGraphData] = React.useState<WikiGraphData | null>(null);
 
   React.useEffect(() => {
@@ -76,73 +78,119 @@ export function WikiBacklinks({ slug, backlinks, outlinks, sourceIds }: Props) {
       .catch(() => setGraphData(null));
   }, [slug]);
 
-  const isEmpty = backlinks.length === 0 && outlinks.length === 0;
-
   return (
-    <div className="w-64 shrink-0 border-l border-border bg-card/30 flex flex-col overflow-hidden">
+    <div className="w-72 shrink-0 border-l border-border bg-card/30 flex flex-col overflow-hidden h-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <span className="material-symbols-outlined text-sm text-muted-foreground">
-          link
+          info
         </span>
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          Connections
+          Page Info
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {isEmpty ? (
-          <p className="text-xs text-muted-foreground py-2">No connections yet.</p>
-        ) : (
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Metadata section */}
+        <div className="space-y-3">
+          {/* Type + Scope */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <WikiTypeBadge type={page.page_type} />
+            <ScopeBadge scopeType={page.scope_type ?? "global"} scopeId={page.scope_id} />
+          </div>
+
+          {/* Version & Date */}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <p className="text-muted-foreground/60 mb-0.5">Version</p>
+              <p className="text-foreground font-medium">v{page.version}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground/60 mb-0.5">Updated</p>
+              <p className="text-foreground font-medium">
+                {new Date(page.updated_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </p>
+            </div>
+          </div>
+
+          {/* Knowledge Types */}
+          {page.knowledge_type_slugs.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground/60 mb-1.5">Knowledge Types</p>
+              <div className="flex flex-wrap gap-1">
+                {page.knowledge_type_slugs.map((kt) => (
+                  <span
+                    key={kt}
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-accent/60 text-accent-foreground border border-border"
+                  >
+                    {kt}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Source documents */}
+          {page.source_ids.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground/60 mb-1.5">
+                Source Documents ({page.source_ids.length})
+              </p>
+              <Link
+                href="/knowledge"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+              >
+                <span className="material-symbols-outlined text-xs">open_in_new</span>
+                View in Knowledge Base
+              </Link>
+            </div>
+          )}
+        </div>
+
+        <hr className="border-border" />
+
+        {/* Connections */}
+        {(page.backlinks.length > 0 || page.outlinks.length > 0) ? (
           <>
-            <Section title="Backlinks" icon="arrow_back" count={backlinks.length}>
-              {backlinks.map((s) => (
+            <Section title="Backlinks" icon="arrow_back" count={page.backlinks.length}>
+              {page.backlinks.map((s) => (
                 <LinkItem key={s} slug={s} direction="back" />
               ))}
             </Section>
-            <Section title="Outlinks" icon="arrow_forward" count={outlinks.length}>
-              {outlinks.map((s) => (
+            <Section title="Outlinks" icon="arrow_forward" count={page.outlinks.length}>
+              {page.outlinks.map((s) => (
                 <LinkItem key={s} slug={s} direction="forward" />
               ))}
             </Section>
           </>
-        )}
-
-        {/* Sources */}
-        {sourceIds.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <span className="material-symbols-outlined text-xs">description</span>
-              Sources
-              <span className="ml-auto tabular-nums">{sourceIds.length}</span>
-            </div>
-            <Link
-              href="/knowledge"
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-            >
-              <span className="material-symbols-outlined text-xs">open_in_new</span>
-              View in Knowledge Base
-            </Link>
-          </div>
-        )}
-
-        {/* Mini graph */}
-        {graphData && graphData.nodes.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 pt-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground border-t border-border">
-              <span className="material-symbols-outlined text-xs">hub</span>
-              Graph
-            </div>
-            <div className="rounded-xl overflow-hidden">
-              <WikiGraphMini
-                slug={slug}
-                nodes={graphData.nodes}
-                edges={graphData.edges}
-              />
-            </div>
-          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground py-1">No connections yet.</p>
         )}
       </div>
+
+      {/* Mini graph pinned to bottom */}
+      {graphData && graphData.nodes.length > 0 && (
+        <div className="shrink-0 border-t border-border p-4 bg-card/40">
+          <div className="flex items-center gap-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="material-symbols-outlined text-xs">hub</span>
+            Local Graph
+          </div>
+          <div className="rounded-xl overflow-hidden border border-border shadow-sm">
+            <WikiGraphMini
+              slug={slug}
+              nodes={graphData.nodes}
+              edges={graphData.edges}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// Keep backward-compatible export name
+export { WikiSidebarRight as WikiBacklinks };

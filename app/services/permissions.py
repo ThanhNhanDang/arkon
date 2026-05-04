@@ -13,6 +13,8 @@ ALL_PERMISSIONS: list[str] = [
     "employees.manage",
     "projects.manage",
     "settings.manage",
+    "scopes.manage",
+    "audit.read",
 ]
 
 PERMISSION_GROUPS: dict[str, list[str]] = {
@@ -22,6 +24,7 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
     "Employees":      ["employees.manage"],
     "Projects":       ["projects.manage"],
     "Settings":       ["settings.manage"],
+    "Access Control": ["scopes.manage", "audit.read"],
 }
 
 PERMISSION_LABELS: dict[str, str] = {
@@ -32,4 +35,6 @@ PERMISSION_LABELS: dict[str, str] = {
     "employees.manage":   "Create, edit, deactivate employees",
     "projects.manage":    "Create, edit, archive projects",
     "settings.manage":    "Change AI provider settings",
+    "scopes.manage":      "Manage scope memberships and roles",
+    "audit.read":         "View audit log",
 }

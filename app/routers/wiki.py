@@ -27,6 +27,8 @@ class WikiPageSummary(BaseModel):
     summary: str
     knowledge_type_slugs: list[str]
     source_ids: list[uuid.UUID]
+    scope_type: str = "global"
+    scope_id: Optional[uuid.UUID] = None
     version: int
     updated_at: str
 
@@ -45,6 +47,8 @@ def _summary(p: WikiPage) -> WikiPageSummary:
         summary=p.summary or "",
         knowledge_type_slugs=p.knowledge_type_slugs or [],
         source_ids=list(p.source_ids or []),
+        scope_type=p.scope_type or "global",
+        scope_id=p.scope_id,
         version=p.version or 1,
         updated_at=p.updated_at.isoformat() if p.updated_at else "",
     )
@@ -105,6 +109,32 @@ async def get_wiki_log(
 ):
     page = await wiki_service.get_page_by_slug(db, wiki_service.LOG_SLUG)
     return {"content_md": page.content_md if page else ""}
+
+
+@router.delete("/wiki/pages/{slug:path}")
+async def delete_wiki_page(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    user: Employee = Depends(get_current_user),
+):
+    """Delete a wiki page and cascade-cleanup all references."""
+    if slug in (wiki_service.INDEX_SLUG, wiki_service.LOG_SLUG):
+        raise HTTPException(400, "Cannot delete reserved pages")
+
+    page = await wiki_service.get_page_by_slug(db, slug)
+    if not page:
+        raise HTTPException(404, f"Wiki page not found: {slug}")
+
+    # Check admin role
+    if user.role not in ("admin", "super_admin"):
+        raise HTTPException(403, "Only admins can delete wiki pages")
+
+    deleted_title = page.title
+    await wiki_service.delete_page_cascade(db, slug)
+    await wiki_service.regenerate_index(db)
+    await wiki_service.append_log(db, f"Deleted page: {deleted_title} ({slug})")
+    await db.commit()
+    return {"ok": True, "deleted_slug": slug}
 
 
 @router.get("/wiki/graph")

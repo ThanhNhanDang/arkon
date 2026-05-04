@@ -6,8 +6,8 @@ import { api } from "@/lib/api";
 import { WikiPageDetail } from "@/types/wiki";
 import { WikiPageTree } from "@/components/wiki/wiki-page-tree";
 import { WikiContent } from "@/components/wiki/wiki-content";
-import { WikiBacklinks } from "@/components/wiki/wiki-backlinks";
-import { WikiTypeBadge } from "@/components/wiki/wiki-type-badge";
+import { WikiSidebarRight } from "@/components/wiki/wiki-backlinks";
+import { wikiTypeGroupLabel } from "@/components/wiki/wiki-type-badge";
 import { WikiSearchDialog } from "@/components/wiki/wiki-search-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
@@ -89,10 +89,25 @@ export default function WikiPageViewer() {
         {/* Center: Content */}
         <div className="flex-1 overflow-y-auto min-w-0">
           {loading ? (
-            <div className="flex items-center justify-center h-32 mt-8">
-              <span className="material-symbols-outlined text-3xl text-muted-foreground animate-spin">
-                progress_activity
-              </span>
+            /* Skeleton loading */
+            <div className="max-w-3xl mx-auto px-8 py-8">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+                <div className="h-4 w-4 text-muted-foreground">/</div>
+                <div className="h-4 w-24 rounded bg-muted animate-pulse" />
+              </div>
+              <div className="h-10 w-2/3 rounded-lg bg-muted animate-pulse mb-3" />
+              <div className="h-4 w-full rounded bg-muted animate-pulse mb-2" />
+              <div className="h-4 w-5/6 rounded bg-muted animate-pulse mb-8" />
+              <div className="space-y-3">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-4 rounded bg-muted animate-pulse"
+                    style={{ width: `${85 - i * 5}%`, opacity: 1 - i * 0.08 }}
+                  />
+                ))}
+              </div>
             </div>
           ) : notFound ? (
             <div className="px-8 py-12">
@@ -104,19 +119,36 @@ export default function WikiPageViewer() {
             </div>
           ) : page ? (
             <div className="max-w-3xl mx-auto px-8 py-8">
+              {/* Breadcrumb & Back Button */}
+              <div className="flex items-center gap-3 mb-6">
+                <Link
+                  href="/wiki"
+                  className="flex items-center justify-center w-8 h-8 rounded-full border border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors shrink-0 shadow-sm"
+                  title="Back to Wiki Index"
+                >
+                  <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                </Link>
+
+                <nav className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Link
+                    href="/wiki"
+                    className="hover:text-foreground transition-colors font-medium"
+                  >
+                    Wiki
+                  </Link>
+                  <span className="material-symbols-outlined text-muted-foreground/50" style={{ fontSize: 14 }}>chevron_right</span>
+                  <span className="capitalize font-medium">
+                    {wikiTypeGroupLabel(page.page_type)}
+                  </span>
+                  <span className="material-symbols-outlined text-muted-foreground/50" style={{ fontSize: 14 }}>chevron_right</span>
+                  <span className="text-foreground font-semibold truncate max-w-[200px]">
+                    {page.title}
+                  </span>
+                </nav>
+              </div>
+
               {/* Page header */}
               <div className="mb-8">
-                <div className="flex items-center gap-2 mb-3">
-                  <WikiTypeBadge type={page.page_type} />
-                  <span className="text-xs text-muted-foreground">
-                    v{page.version} · Updated{" "}
-                    {new Date(page.updated_at).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </span>
-                </div>
                 <h1 className="font-heading text-4xl font-normal leading-tight text-foreground">
                   {page.title}
                 </h1>
@@ -131,15 +163,10 @@ export default function WikiPageViewer() {
           ) : null}
         </div>
 
-        {/* Right: Backlinks (hidden on < lg) */}
+        {/* Right: Sidebar (hidden on < lg) */}
         {page && (
-          <div className="hidden lg:block">
-            <WikiBacklinks
-              slug={fullSlug}
-              backlinks={page.backlinks}
-              outlinks={page.outlinks}
-              sourceIds={page.source_ids}
-            />
+          <div className="hidden lg:block h-full">
+            <WikiSidebarRight slug={fullSlug} page={page} />
           </div>
         )}
       </div>

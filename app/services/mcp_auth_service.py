@@ -19,7 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import Department, Employee, KnowledgeScope, ProjectMember, ProjectSource, Source
+from app.database.models import Department, Employee, KnowledgeScope, ProjectMember, ProjectSource, ScopeMembership, Source
 
 
 @dataclass
@@ -33,6 +33,8 @@ class ResolvedIdentity:
     allowed_source_ids: Optional[list[str]] = None       # None = all
     project_source_ids: list[str] = field(default_factory=list)  # always granted via projects
     is_admin: bool = False
+    # Scope-based RBAC (Phase 1)
+    scope_memberships: list[ScopeMembership] = field(default_factory=list)
 
 
 class MCPAuthService:
@@ -70,10 +72,32 @@ class MCPAuthService:
         Compute effective knowledge scope for an employee.
 
         Resolution order:
-        1. Check personal scopes (employee_id-specific)
-        2. Fall back to department scopes
+        1. Check scope_memberships (new system)
+        2. Fall back to knowledge_scopes (legacy, for backward compatibility)
         3. If no scopes defined → access all knowledge (open policy)
         """
+        # Load scope memberships (new system)
+        scope_stmt = select(ScopeMembership).where(
+            ScopeMembership.employee_id == employee.id
+        )
+        scope_result = await self.db.execute(scope_stmt)
+        scope_memberships = list(scope_result.scalars().all())
+
+        project_source_ids = await self._resolve_project_sources(employee.id)
+
+        # If we have scope memberships, use them (new system)
+        if scope_memberships:
+            return ResolvedIdentity(
+                employee_id=employee.id,
+                employee_name=employee.name,
+                department_id=employee.department_id,
+                department_name=employee.department.name if employee.department else "",
+                project_source_ids=project_source_ids,
+                is_admin=(employee.role == "admin"),
+                scope_memberships=scope_memberships,
+            )
+
+        # Legacy fallback: use knowledge_scopes
         # 1. Personal scopes first
         stmt = select(KnowledgeScope).where(
             KnowledgeScope.employee_id == employee.id
@@ -91,8 +115,6 @@ class MCPAuthService:
 
         # Merge scopes: personal overrides department
         effective_scopes = personal_scopes if personal_scopes else dept_scopes
-
-        project_source_ids = await self._resolve_project_sources(employee.id)
 
         if not effective_scopes:
             # No scopes defined → open access (default permissive)

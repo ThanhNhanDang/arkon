@@ -21,8 +21,10 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function WikiPageTree({
   activeSlug,
+  onDeleted,
 }: {
   activeSlug?: string;
+  onDeleted?: () => void;
 }) {
   const pathname = usePathname();
   const [pages, setPages] = React.useState<WikiPageSummary[]>([]);
@@ -32,14 +34,54 @@ export function WikiPageTree({
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(
     new Set(GROUP_ORDER)
   );
+  // Two-stage delete
+  const [armedSlug, setArmedSlug] = React.useState<string | null>(null);
+  const [deletingSlug, setDeletingSlug] = React.useState<string | null>(null);
+
   const debouncedSearch = useDebounce(search, 150);
 
-  React.useEffect(() => {
+  const loadPages = React.useCallback(() => {
     api<WikiPageSummary[]>("/api/wiki/pages?limit=200")
       .then((data) => setPages(Array.isArray(data) ? data : []))
       .catch(() => setPages([]))
       .finally(() => setLoading(false));
   }, []);
+
+  React.useEffect(() => {
+    loadPages();
+  }, [loadPages]);
+
+  const handleDelete = async (slug: string) => {
+    // First click: arm; second click: execute
+    if (armedSlug !== slug) {
+      setArmedSlug(slug);
+      return;
+    }
+    setArmedSlug(null);
+    setDeletingSlug(slug);
+    try {
+      await api(`/api/wiki/pages/${encodeURIComponent(slug)}`, { method: "DELETE" });
+      loadPages();
+      onDeleted?.();
+    } catch (err) {
+      console.error("Delete failed:", err);
+    } finally {
+      setDeletingSlug(null);
+    }
+  };
+
+  // Click outside armed row → disarm
+  React.useEffect(() => {
+    if (!armedSlug) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(`[data-slug="${armedSlug}"]`)) {
+        setArmedSlug(null);
+      }
+    };
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, [armedSlug]);
 
   const filtered = React.useMemo(() => {
     if (!debouncedSearch) return pages;
@@ -62,6 +104,10 @@ export function WikiPageTree({
     }
     return map;
   }, [filtered]);
+
+  const totalCount = filtered.filter(
+    (p) => p.page_type !== "index" && p.page_type !== "log"
+  ).length;
 
   const toggleGroup = (type: string) =>
     setExpandedGroups((prev) => {
@@ -92,6 +138,9 @@ export function WikiPageTree({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex-1">
           Pages
+        </span>
+        <span className="text-xs text-muted-foreground tabular-nums bg-muted rounded-md px-1.5 py-0.5">
+          {totalCount}
         </span>
         <button
           onClick={() => setCollapsed(true)}
@@ -170,20 +219,55 @@ export function WikiPageTree({
                   <div className="ml-3">
                     {items.map((page) => {
                       const isActive = page.slug === currentSlug;
+                      const isArmed = armedSlug === page.slug;
+                      const isDeleting = deletingSlug === page.slug;
                       return (
-                        <Link
+                        <div
                           key={page.slug}
-                          href={`/wiki/${page.slug}`}
+                          data-slug={page.slug}
                           className={cn(
-                            "flex items-center gap-2 px-3 py-1.5 rounded-lg mx-1 text-xs transition-all",
+                            "group flex items-center gap-1 rounded-lg mx-1 transition-all",
                             isActive
-                              ? "bg-primary/10 text-primary font-medium"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                              ? "bg-primary/10"
+                              : "hover:bg-accent/50"
                           )}
-                          title={page.summary || page.title}
                         >
-                          <span className="truncate">{page.title}</span>
-                        </Link>
+                          <Link
+                            href={`/wiki/${page.slug}`}
+                            className={cn(
+                              "flex-1 flex items-center gap-2 px-2 py-1.5 text-xs min-w-0 transition-all",
+                              isActive
+                                ? "text-primary font-medium"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                            title={page.summary || page.title}
+                          >
+                            <span className="truncate">{page.title}</span>
+                          </Link>
+
+                          {/* Delete button — 2-stage */}
+                          {isDeleting ? (
+                            <span className="material-symbols-outlined text-xs text-destructive animate-pulse mr-1.5">
+                              progress_activity
+                            </span>
+                          ) : isArmed ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDelete(page.slug); }}
+                              className="shrink-0 mr-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-destructive text-destructive-foreground hover:bg-destructive/90 animate-pulse transition-colors"
+                              title={`Click again to confirm delete "${page.title}"`}
+                            >
+                              Confirm
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(page.slug); }}
+                              className="shrink-0 mr-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
+                              title={`Delete "${page.title}"`}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -193,17 +277,6 @@ export function WikiPageTree({
           })
         )}
       </div>
-
-      {/* Footer: link to graph */}
-      {/* <div className="border-t border-border p-3">
-        <Link
-          href="/wiki/graph"
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-        >
-          <span className="material-symbols-outlined text-sm">hub</span>
-          Graph View
-        </Link>
-      </div> */}
     </div>
   );
 }

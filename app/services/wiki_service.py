@@ -420,6 +420,60 @@ async def append_log(session: AsyncSession, entry: str) -> WikiPage:
 
 
 # ---------------------------------------------------------------------------
+# Page deletion — cascade cleanup
+# ---------------------------------------------------------------------------
+
+async def delete_page_cascade(
+    session: AsyncSession,
+    slug: str,
+) -> None:
+    """
+    Delete a wiki page and cascade-cleanup all references:
+    1. Delete all outgoing links from this page
+    2. Delete all incoming links pointing to this page
+    3. Remove [[slug]] and [[slug|text]] wikilinks from pages that reference this one
+    4. Delete the page itself
+    """
+    # 1+2: Remove all wikilink edges
+    await session.execute(
+        delete(WikiLink).where(
+            (WikiLink.from_slug == slug) | (WikiLink.to_slug == slug)
+        )
+    )
+
+    # 3: Find pages that reference this slug in their content and clean up
+    # Look for [[slug]] or [[slug|display text]] patterns
+    referring_pages = (await session.execute(
+        select(WikiPage).where(
+            WikiPage.content_md.contains(f"[[{slug}]]")
+            | WikiPage.content_md.contains(f"[[{slug}|")
+        )
+    )).scalars().all()
+
+    for ref_page in referring_pages:
+        if ref_page.slug == slug:
+            continue
+        cleaned = ref_page.content_md or ""
+        # Replace [[slug|display]] with just display text
+        cleaned = re.sub(
+            rf"\[\[{re.escape(slug)}\|([^\]]+)\]\]",
+            r"\1",
+            cleaned,
+        )
+        # Replace [[slug]] with slug text
+        cleaned = cleaned.replace(f"[[{slug}]]", slug.split("/")[-1])
+        ref_page.content_md = cleaned
+
+    # 4: Delete the page
+    page = await get_page_by_slug(session, slug)
+    if page:
+        await session.delete(page)
+
+    await session.flush()
+    logger.info(f"delete_page_cascade({slug}): deleted page + cleaned {len(referring_pages)} references")
+
+
+# ---------------------------------------------------------------------------
 # Source removal — for force-recompile
 # ---------------------------------------------------------------------------
 

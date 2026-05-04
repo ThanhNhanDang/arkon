@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.database.models import Department, Employee, KnowledgeScope, Role
+from app.database.models import Department, Employee, KnowledgeScope, Role, ScopeMembership, ScopeRole, ScopeType
 from app.services.mcp_auth_service import MCPAuthService
 from app.services.auth_service import get_current_user, require_admin, require_permission, hash_password
 
@@ -212,6 +212,27 @@ async def create_employee(
     )
     db.add(emp)
     await db.flush()
+
+    # Auto-create scope memberships
+    # Global scope: admin gets admin role, employee gets reader
+    global_role = ScopeRole.ADMIN.value if body.role == "admin" else ScopeRole.READER.value
+    db.add(ScopeMembership(
+        employee_id=emp.id,
+        scope_type=ScopeType.GLOBAL.value,
+        scope_id=None,
+        role=global_role,
+        granted_by_id=_user.id,
+    ))
+    # Department scope: contributor by default
+    db.add(ScopeMembership(
+        employee_id=emp.id,
+        scope_type=ScopeType.DEPARTMENT.value,
+        scope_id=uuid.UUID(body.department_id),
+        role=ScopeRole.CONTRIBUTOR.value,
+        granted_by_id=_user.id,
+    ))
+    await db.flush()
+
     return {"id": str(emp.id), "name": emp.name, "email": emp.email}
 
 

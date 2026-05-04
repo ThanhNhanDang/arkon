@@ -4,7 +4,7 @@ import React from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { ScopeDialog } from "@/components/shared/scope-dialog";
+import { ScopeMembersDialog } from "@/components/shared/scope-members-dialog";
 
 type Department = {
   id: string;
@@ -113,11 +113,12 @@ export function DepartmentCards({ departments, loading, onEdit, onRefresh }: Pro
       ))}
 
       {scopeDept && (
-        <ScopeDialog
+        <ScopeMembersDialog
           open={!!scopeDept}
           onOpenChange={(open) => { if (!open) setScopeDept(null); }}
           label={scopeDept.name}
-          departmentId={scopeDept.id}
+          scopeType="department"
+          scopeId={scopeDept.id}
         />
       )}
     </div>

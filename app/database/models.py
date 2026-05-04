@@ -4,6 +4,7 @@ SQLAlchemy ORM models for all database tables.
 
 import uuid
 from datetime import datetime
+from enum import Enum as PyEnum
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
@@ -16,10 +17,69 @@ from sqlalchemy import (
     Text,
     Integer,
     Boolean,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+# ---------------------------------------------------------------------------
+# Scope-based RBAC Enums & Constants
+# ---------------------------------------------------------------------------
+
+class ScopeType(str, PyEnum):
+    """Types of knowledge scopes."""
+    GLOBAL = "global"
+    PROJECT = "project"
+    DEPARTMENT = "department"
+    TEAM = "team"
+
+
+class ScopeRole(str, PyEnum):
+    """Role within a scope (ordered by privilege level)."""
+    READER = "reader"
+    CONTRIBUTOR = "contributor"
+    OWNER = "owner"
+    ADMIN = "admin"
+
+
+ROLE_HIERARCHY: dict["ScopeRole", int] = {
+    ScopeRole.READER: 0,
+    ScopeRole.CONTRIBUTOR: 1,
+    ScopeRole.OWNER: 2,
+    ScopeRole.ADMIN: 3,
+}
+
+
+class Action(str, PyEnum):
+    """Atomic actions on resources (SRS §4.2)."""
+    READ = "read"
+    LIST = "list"
+    COMMENT = "comment"
+    PROPOSE_EDIT = "propose_edit"
+    APPROVE_EDIT = "approve_edit"
+    WRITE_DIRECT = "write_direct"
+    DELETE = "delete"
+    CREATE_LINK = "create_link"
+    MANAGE_MEMBERS = "manage_members"
+    MANAGE_SETTINGS = "manage_settings"
+
+
+# Role × Action permission matrix (SRS §4.3)
+ROLE_PERMISSIONS: dict["ScopeRole", set["Action"]] = {
+    ScopeRole.READER: {Action.READ, Action.LIST},
+    ScopeRole.CONTRIBUTOR: {
+        Action.READ, Action.LIST, Action.COMMENT,
+        Action.PROPOSE_EDIT, Action.CREATE_LINK,
+    },
+    ScopeRole.OWNER: {
+        Action.READ, Action.LIST, Action.COMMENT,
+        Action.PROPOSE_EDIT, Action.APPROVE_EDIT,
+        Action.CREATE_LINK, Action.DELETE, Action.MANAGE_MEMBERS,
+    },
+    ScopeRole.ADMIN: set(Action),
+}
 
 
 class Base(DeclarativeBase):
@@ -40,6 +100,15 @@ class Source(Base):
     title: Mapped[Optional[str]] = mapped_column(String(500))
     full_text: Mapped[Optional[str]] = mapped_column(Text)
     source_type: Mapped[Optional[str]] = mapped_column(String(50))  # "file", "url"
+    # --- Scope-based access control ---
+    scope_type: Mapped[str] = mapped_column(
+        String(20), default=ScopeType.GLOBAL.value,
+        comment="Scope type: global, project, department, team",
+    )
+    scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="Scope entity ID. Null for global scope.",
+    )
     knowledge_type_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("knowledge_types.id", ondelete="SET NULL"),
         nullable=True,
@@ -103,6 +172,15 @@ class WikiPage(Base):
     page_type: Mapped[str] = mapped_column(String(30), nullable=False)
     content_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # --- Scope-based access control ---
+    scope_type: Mapped[str] = mapped_column(
+        String(20), default=ScopeType.GLOBAL.value,
+        comment="Scope type: global, project, department, team",
+    )
+    scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="Scope entity ID. Null for global scope.",
+    )
     knowledge_type_slugs: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list,
     )
@@ -401,8 +479,9 @@ class KnowledgeScope(Base):
 
 class Project(Base):
     """
-    A named context grouping employees and sources across departments.
-    Examples: a client project, an event, a deal — any temporary, cross-functional context.
+    A named workspace grouping employees and sources across departments.
+    Can represent a project, customer engagement, or any cross-functional context.
+    workspace_type distinguishes between 'project' and 'customer'.
     """
     __tablename__ = "projects"
 
@@ -411,6 +490,10 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    workspace_type: Mapped[str] = mapped_column(
+        String(20), default="project",
+        comment="project or customer",
+    )
     status: Mapped[str] = mapped_column(
         String(20), default="active",
         comment="active or archived",
@@ -487,4 +570,125 @@ class ProjectSource(Base):
 
     __table_args__ = (
         Index("ix_project_sources_source_id", "source_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scope-based RBAC: Membership & Audit
+# ---------------------------------------------------------------------------
+
+class ScopeMembership(Base):
+    """
+    Maps a principal (employee) to a scope with a specific role.
+    Replaces KnowledgeScope with a cleaner, per-scope-role model.
+
+    Scoping rules:
+      - scope_type='global', scope_id=None → org-wide access
+      - scope_type='project', scope_id=<project.id> → project-level access
+      - scope_type='department', scope_id=<department.id> → department-level access
+      - scope_type='team', scope_id=<team.id> → team-level access
+
+    Implements FR-10, FR-12, FR-13 from AccessControl.md.
+    """
+    __tablename__ = "scope_memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"),
+    )
+    scope_type: Mapped[str] = mapped_column(
+        String(20), nullable=False,
+        comment="Scope type: global, project, department, team",
+    )
+    scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="Scope entity ID. Null for global scope.",
+    )
+    role: Mapped[str] = mapped_column(
+        String(20), default=ScopeRole.READER.value,
+        comment="Role within this scope: reader, contributor, owner, admin",
+    )
+    granted_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Who granted this membership (FR-11)",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    employee: Mapped["Employee"] = relationship(
+        foreign_keys=[employee_id],
+    )
+    granted_by: Mapped[Optional["Employee"]] = relationship(
+        foreign_keys=[granted_by_id],
+    )
+
+    __table_args__ = (
+        UniqueConstraint("employee_id", "scope_type", "scope_id",
+                         name="uq_scope_membership_employee_scope"),
+        Index("ix_scope_memberships_employee_id", "employee_id"),
+        Index("ix_scope_memberships_scope", "scope_type", "scope_id"),
+    )
+
+
+class AuditLog(Base):
+    """
+    Append-only access decision log.
+    Records every allow/deny decision for compliance and debugging.
+
+    Implements NFR-01, NFR-02 from AccessControl.md.
+    """
+    __tablename__ = "audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False,
+        comment="Employee or agent ID",
+    )
+    principal_type: Mapped[str] = mapped_column(
+        String(20), default="human",
+        comment="human or agent",
+    )
+    action: Mapped[str] = mapped_column(
+        String(50), nullable=False,
+        comment="Action attempted (read, list, delete...)",
+    )
+    resource_type: Mapped[str] = mapped_column(
+        String(50), nullable=False,
+        comment="Type of resource: source, wiki_page, scope_membership...",
+    )
+    resource_id: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        comment="UUID or identifier of the resource",
+    )
+    scope_type: Mapped[Optional[str]] = mapped_column(String(20))
+    scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    decision: Mapped[str] = mapped_column(
+        String(10), nullable=False,
+        comment="allow or deny",
+    )
+    reason: Mapped[Optional[str]] = mapped_column(
+        Text,
+        comment="Human-readable reason for the decision (FR-31)",
+    )
+    metadata_: Mapped[Optional[dict]] = mapped_column(
+        "metadata", JSONB,
+        comment="Extra context (IP, user agent, request ID...)",
+    )
+
+    __table_args__ = (
+        Index("ix_audit_log_timestamp", "timestamp"),
+        Index("ix_audit_log_principal", "principal_id"),
+        Index("ix_audit_log_resource", "resource_type", "resource_id"),
     )
