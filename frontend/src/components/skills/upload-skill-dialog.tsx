@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
-import { apiUpload, ApiError } from "@/lib/api";
+import { useState, useRef, useMemo, useEffect } from "react";
+import { apiUpload, api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,6 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type UploadSkillDialogProps = {
   allTags: string[];
@@ -30,7 +37,8 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
 
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>("");
+  const [scopeType, setScopeType] = useState("global");
+  const [scopeId, setScopeId] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [force, setForce] = useState(false);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
@@ -40,7 +48,8 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
   const resetForm = () => {
     setSelectedFiles(null);
     setSelectedTags([]);
-    setSelectedDepartmentId("");
+    setScopeType("global");
+    setScopeId("");
     setTagInput("");
     setForce(false);
     setConflictFiles([]);
@@ -57,58 +66,58 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
         formData.append("files", selectedFiles[i]);
       }
       formData.append("categories", selectedTags.join(","));
-      if (selectedDepartmentId) {
-        formData.append("department_id", selectedDepartmentId);
+      formData.append("scope_type", scopeType);
+      
+      if (scopeType === "department") {
+        formData.append("scope_id", scopeId);
+        formData.append("department_id", scopeId); // Legacy support
       }
-      formData.append("force", String(force));
 
-      await apiUpload<{ results: any[] }>("/api/skills/upload", formData);
+      if (force) {
+        formData.append("force", "true");
+      }
 
-      setIsOpen(false);
-      resetForm();
+      await apiUpload("/api/skills/upload", formData);
       onUploaded();
       onRefreshTags();
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        const data = error.data as any;
-        setConflictFiles(data.detail.duplicates || []);
+      setIsOpen(false);
+      resetForm();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setConflictFiles(err.data?.conflicts || []);
       } else {
-        alert(error instanceof Error ? error.message : "Upload failed");
+        alert(err instanceof Error ? err.message : "Upload failed");
       }
     } finally {
       setUploadLoading(false);
     }
   };
 
-  const toggleTag = (t: string) => {
-    if (selectedTags.includes(t)) {
-      setSelectedTags(selectedTags.filter(item => item !== t));
+  const filteredSuggestions = useMemo(() => {
+    if (!tagInput) return [];
+    return allTags.filter(t => 
+      t.toLowerCase().includes(tagInput.toLowerCase()) && 
+      !selectedTags.includes(t)
+    ).slice(0, 5);
+  }, [tagInput, allTags, selectedTags]);
+
+  const toggleTag = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      setSelectedTags(selectedTags.filter(t => t !== tag));
     } else {
-      setSelectedTags([...selectedTags, t]);
-      setTagInput(""); // Clear input on select
+      setSelectedTags([...selectedTags, tag]);
     }
+    setTagInput("");
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === ",") {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && tagInput) {
       e.preventDefault();
-      const val = tagInput.trim().toLowerCase();
-      if (val && allTags.includes(val) && !selectedTags.includes(val)) {
-        setSelectedTags([...selectedTags, val]);
-        setTagInput("");
-      }
+      toggleTag(tagInput);
     } else if (e.key === "Backspace" && !tagInput && selectedTags.length > 0) {
       setSelectedTags(selectedTags.slice(0, -1));
     }
   };
-
-  const filteredSuggestions = useMemo(() => {
-    if (!tagInput) return [];
-    return allTags.filter(t =>
-      t.toLowerCase().includes(tagInput.toLowerCase()) &&
-      !selectedTags.includes(t)
-    ).slice(0, 5);
-  }, [allTags, tagInput, selectedTags]);
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
@@ -126,39 +135,80 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
       <DialogContent className="sm:max-w-[500px]">
         <form onSubmit={handleUpload}>
           <DialogHeader>
-            <DialogTitle>Upload Skill Packages</DialogTitle>
+            <DialogTitle>Upload AI Skill</DialogTitle>
             <DialogDescription>
-              Select ZIP files and assign existing tags.
+              Select one or more ZIP packages containing AI skills.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-6 py-6">
             <div className="grid gap-2">
-              <Label htmlFor="files">Skill Files (ZIP)</Label>
+              <Label htmlFor="files">Skill Packages (ZIP)</Label>
               <Input
                 id="files"
                 type="file"
                 accept=".zip"
                 multiple
                 onChange={(e) => setSelectedFiles(e.target.files)}
-                className="bg-secondary/5"
+                className="cursor-pointer bg-secondary/5 border-dashed border-2 hover:border-primary/50 transition-all py-8 h-auto"
               />
+              {selectedFiles && selectedFiles.length > 0 && (
+                <p className="text-[11px] text-primary font-medium animate-in fade-in">
+                  {selectedFiles.length} file(s) selected
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="dept">Department (Optional)</Label>
-              <select
-                id="dept"
-                value={selectedDepartmentId}
-                onChange={(e) => setSelectedDepartmentId(e.target.value)}
-                className="w-full h-10 px-3 rounded-md border border-border bg-secondary/5 text-sm focus:ring-1 focus:ring-primary outline-none transition-all"
-              >
-                <option value="">No Department</option>
-                {allDepartments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
+              <Label>Visibility</Label>
+              <Select value={scopeType} onValueChange={(v) => {
+                setScopeType(v);
+                setScopeId("");
+              }}>
+                <SelectTrigger className="bg-secondary/5 h-11">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-lg">
+                      {scopeType === "global" ? "public" : "domain"}
+                    </span>
+                    <span className="capitalize">{scopeType}</span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="min-w-[240px]">
+                  <SelectItem value="global">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base">public</span>
+                      Global (All employees)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="department">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base">domain</span>
+                      Department
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            {scopeType === "department" && (
+              <div className="grid gap-2 animate-in fade-in slide-in-from-top-1">
+                <Label htmlFor="dept">Target Department</Label>
+                <Select value={scopeId} onValueChange={setScopeId}>
+                  <SelectTrigger className="bg-secondary/5 h-11">
+                    <SelectValue>
+                      {allDepartments.find(d => d.id === scopeId)?.name || "Select department..."}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allDepartments.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        {d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="grid gap-2 relative">
               <Label>Tags</Label>
@@ -173,7 +223,7 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
                   <Badge
                     key={t}
                     variant="secondary"
-                    className="pl-2 pr-1.5 py-0.5 h-7 text-[12px] font-medium border-primary/30 bg-primary/5 text-primary rounded-full flex items-center gap-1 animate-in zoom-in-95 duration-200"
+                    className="pl-2 pr-1.5 py-0.5 h-7 text-[12px] font-medium border-primary/30 bg-primary/5 text-primary rounded-full flex items-center gap-1"
                   >
                     {t}
                     <button
@@ -189,16 +239,15 @@ export function UploadSkillDialog({ allTags, allDepartments, onUploaded, onRefre
                   ref={inputRef}
                   type="text"
                   className="flex-1 bg-transparent border-none outline-none text-sm min-w-[120px] py-0.5"
-                  placeholder={selectedTags.length === 0 ? "Search tags..." : ""}
+                  placeholder={selectedTags.length === 0 ? "Add tags..." : ""}
                   value={tagInput}
                   onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                 />
               </div>
 
-              {/* Suggestions Dropdown */}
               {filteredSuggestions.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 border border-border rounded-md bg-card shadow-xl z-20 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="absolute top-full left-0 right-0 mt-1 border border-border rounded-md bg-card shadow-xl z-20 overflow-hidden animate-in fade-in slide-in-from-top-1">
                   {filteredSuggestions.map(t => (
                     <div
                       key={t}

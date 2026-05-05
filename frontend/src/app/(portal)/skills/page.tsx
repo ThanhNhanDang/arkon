@@ -3,13 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skill, SkillCard } from "@/components/skills/skill-card";
 import { UploadSkillDialog } from "@/components/skills/upload-skill-dialog";
 import { BulkChangeTagsDialog } from "@/components/skills/bulk-change-tags-dialog";
-import { BulkChangeDeptDialog } from "@/components/skills/bulk-change-dept-dialog";
+import { BulkChangeVisibilityDialog } from "@/components/skills/bulk-change-dept-dialog";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TagsManager } from "@/components/skills/tags-manager";
@@ -30,6 +31,7 @@ const LIMIT = 2000;
 
 export default function SkillsPage() {
   const router = useRouter();
+  const { canAccess } = useAuth();
   const [activeTab, setActiveTab] = useState("skills");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [total, setTotal] = useState(0);
@@ -215,7 +217,7 @@ export default function SkillsPage() {
         title="AI Skill Library"
         description="Manage and deploy skill packages for your AI system."
         action={
-          activeTab === "skills" ? (
+          activeTab === "skills" && canAccess("skill", "create") ? (
             <UploadSkillDialog
               allTags={allTags}
               allDepartments={allDepartments}
@@ -283,36 +285,42 @@ export default function SkillsPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={selectedIds.length === 0}
-                      onClick={() => setIsBulkTagDialogOpen(true)}
-                      className="h-9 px-4 font-semibold shadow-sm hover:bg-secondary transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-sm mr-1">label</span>
-                      Change Tags
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={selectedIds.length === 0}
-                      onClick={() => setIsBulkDeptDialogOpen(true)}
-                      className="h-9 px-4 font-semibold shadow-sm hover:bg-secondary transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-sm mr-1">corporate_fare</span>
-                      Change Dept
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={selectedIds.length === 0}
-                      onClick={handleBulkDelete}
-                      className="h-9 px-4 font-semibold shadow-sahara"
-                    >
-                      <span className="material-symbols-outlined text-sm mr-1">delete_sweep</span>
-                      Delete
-                    </Button>
+                    {canAccess("skill", "edit") && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedIds.length === 0}
+                          onClick={() => setIsBulkTagDialogOpen(true)}
+                          className="h-9 px-4 font-semibold shadow-sm hover:bg-secondary transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-sm mr-1">label</span>
+                          Change Tags
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedIds.length === 0}
+                          onClick={() => setIsBulkDeptDialogOpen(true)}
+                          className="h-9 px-4 font-semibold shadow-sm hover:bg-secondary transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-sm mr-1">corporate_fare</span>
+                          Change Visibility
+                        </Button>
+                      </>
+                    )}
+                    {canAccess("skill", "delete") && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={selectedIds.length === 0}
+                        onClick={handleBulkDelete}
+                        className="h-9 px-4 font-semibold shadow-sahara"
+                      >
+                        <span className="material-symbols-outlined text-sm mr-1">delete_sweep</span>
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}
@@ -346,14 +354,7 @@ export default function SkillsPage() {
                       ))}
                     </div>
 
-                    {/* Footer */}
-                    <div className="h-10 w-full flex items-center justify-center">
-                      {!loading && skills.length > 0 && (
-                        <p className="text-[10px] text-muted-foreground italic opacity-50 uppercase tracking-tighter">
-                          — {skills.length} skills —
-                        </p>
-                      )}
-                    </div>
+
                   </>
                 )}
               </div>
@@ -378,7 +379,7 @@ export default function SkillsPage() {
         }}
       />
 
-      <BulkChangeDeptDialog
+      <BulkChangeVisibilityDialog
         skillIds={selectedIds}
         departments={allDepartments}
         open={isBulkDeptDialogOpen}

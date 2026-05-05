@@ -1,16 +1,16 @@
-"""Add skills, skill_versions, tags and skill_tags tables.
+"""Add AI Skills with scoped permission support.
 
-Revision ID: 009
-Revises: 008
-Create Date: 2026-05-03
+Revision ID: 012
+Revises: 011_permission_v2
+Create Date: 2026-05-05
 """
 
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "009"
-down_revision = "008"
+revision = "012"
+down_revision = "011_permission_v2"
 branch_labels = None
 depends_on = None
 
@@ -25,7 +25,7 @@ def upgrade() -> None:
         skill_status = postgresql.ENUM("active", "processing", "deleting", "deprecated", "archived", name="skill_status")
         skill_status.create(bind)
 
-    # 2. Create skills table
+    # 2. Create skills table with scoping columns
     op.create_table(
         "skills",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -47,6 +47,10 @@ def upgrade() -> None:
             nullable=False,
             server_default="active",
         ),
+        # Scoping columns (RBAC v2)
+        sa.Column("scope_type", sa.String(length=20), nullable=False, server_default="global"),
+        sa.Column("scope_id", postgresql.UUID(as_uuid=True), nullable=True),
+        
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

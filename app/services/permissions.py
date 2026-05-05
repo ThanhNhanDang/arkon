@@ -17,36 +17,31 @@ Used by: require_permission() in auth_service, Role CRUD, and the frontend UI.
 # ---------------------------------------------------------------------------
 
 ALL_PERMISSIONS: list[str] = [
-    # Documents (Sources)
-    "doc:read:own_dept",
-    "doc:read:all",
-    "doc:create:own_dept",
-    "doc:create:all",
-    "doc:edit:own_dept",
-    "doc:edit:all",
-    "doc:delete:own_dept",
-    "doc:delete:all",
+    # Documents
+    "doc:read:own_dept", "doc:read:all",
+    "doc:create:own_dept", "doc:create:all",
+    "doc:edit:own_dept", "doc:edit:all",
+    "doc:delete:own_dept", "doc:delete:all",
 
     # Wiki
-    "wiki:read:own_dept",
-    "wiki:read:all",
-    "wiki:write:own_dept",
-    "wiki:write:all",
-    "wiki:delete:own_dept",
-    "wiki:delete:all",
+    "wiki:read:own_dept", "wiki:read:all",
+    "wiki:write:own_dept", "wiki:write:all",
+    "wiki:delete:own_dept", "wiki:delete:all",
 
-    # Organization (no scope — these are admin-level)
-    "org:departments:read",
-    "org:departments:manage",
-    "org:employees:read",
-    "org:employees:manage",
-    "org:roles:read",
-    "org:roles:manage",
-    "org:settings:read",
-    "org:settings:manage",
+    # AI Skills
+    "skill:read:own_dept", "skill:read:all",
+    "skill:create:own_dept", "skill:create:all",
+    "skill:edit:own_dept", "skill:edit:all",
+    "skill:delete:own_dept", "skill:delete:all",
+
+    # Organization
+    "org:departments:read", "org:departments:manage",
+    "org:employees:read", "org:employees:manage",
+    "org:roles:read", "org:roles:manage",
+    "org:settings:read", "org:settings:manage",
     "org:audit:read",
 
-    # Workspace override — admin can view all workspaces without membership
+    # Workspaces
     "workspace:view:all",
 ]
 
@@ -60,6 +55,7 @@ EMPLOYEE_DEFAULT_PERMISSIONS: list[str] = [
     "doc:create:own_dept",
     "wiki:read:own_dept",
     "wiki:write:own_dept",
+    "skill:read:own_dept",
 ]
 
 # ---------------------------------------------------------------------------
@@ -77,6 +73,12 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
         "wiki:read:own_dept", "wiki:read:all",
         "wiki:write:own_dept", "wiki:write:all",
         "wiki:delete:own_dept", "wiki:delete:all",
+    ],
+    "AI Skills": [
+        "skill:read:own_dept", "skill:read:all",
+        "skill:create:own_dept", "skill:create:all",
+        "skill:edit:own_dept", "skill:edit:all",
+        "skill:delete:own_dept", "skill:delete:all",
     ],
     "Organization": [
         "org:departments:read", "org:departments:manage",
@@ -109,6 +111,16 @@ PERMISSION_LABELS: dict[str, str] = {
     "wiki:write:all":         "Create/edit all wiki pages",
     "wiki:delete:own_dept":   "Delete wiki pages (own department)",
     "wiki:delete:all":        "Delete all wiki pages",
+
+    # AI Skills
+    "skill:read:own_dept":    "View AI skills (own department + global)",
+    "skill:read:all":         "View all AI skills",
+    "skill:create:own_dept":  "Upload AI skills (own department)",
+    "skill:create:all":       "Upload AI skills (any department)",
+    "skill:edit:own_dept":    "Edit AI skills (own department)",
+    "skill:edit:all":         "Edit all AI skills",
+    "skill:delete:own_dept":  "Delete AI skills (own department)",
+    "skill:delete:all":       "Delete all AI skills",
 
     # Organization
     "org:departments:read":   "View departments",
@@ -146,6 +158,16 @@ PERMISSION_DESCRIPTIONS: dict[str, str] = {
     "wiki:delete:own_dept":   "Delete wiki pages belonging to your department.",
     "wiki:delete:all":        "Delete any wiki page. Dangerous — only grant to trusted admins.",
 
+    # AI Skills
+    "skill:read:own_dept":    "View AI skills scoped to your department and Global skills.",
+    "skill:read:all":         "View all AI skills across every department.",
+    "skill:create:own_dept":  "Upload AI skills to your department.",
+    "skill:create:all":       "Upload AI skills to any department.",
+    "skill:edit:own_dept":    "Edit AI skills metadata for your department.",
+    "skill:edit:all":         "Edit any AI skill in the system.",
+    "skill:delete:own_dept":  "Delete AI skills belonging to your department.",
+    "skill:delete:all":       "Delete any AI skill. Dangerous.",
+
     # Organization
     "org:departments:read":   "View the list of departments and their details. Required for most admin views.",
     "org:departments:manage": "Create, edit, and delete departments. Changes affect document access scopes.",
@@ -169,7 +191,7 @@ PERMISSION_DESCRIPTIONS: dict[str, str] = {
 ROLE_PRESETS: dict[str, dict] = {
     "Viewer": {
         "description": "Basic read-only access to own department documents and wiki",
-        "permissions": ["doc:read:own_dept", "wiki:read:own_dept"],
+        "permissions": ["doc:read:own_dept", "wiki:read:own_dept", "skill:read:own_dept", "org:departments:read"],
         "is_system": True,
     },
     "Contributor": {
@@ -177,6 +199,8 @@ ROLE_PRESETS: dict[str, dict] = {
         "permissions": [
             "doc:read:own_dept", "doc:create:own_dept",
             "wiki:read:own_dept", "wiki:write:own_dept",
+            "skill:read:own_dept", "skill:create:own_dept",
+            "org:departments:read",
         ],
         "is_system": True,
     },
@@ -186,6 +210,8 @@ ROLE_PRESETS: dict[str, dict] = {
             "doc:read:own_dept", "doc:create:own_dept",
             "doc:edit:own_dept", "doc:delete:own_dept",
             "wiki:read:own_dept", "wiki:write:own_dept", "wiki:delete:own_dept",
+            "skill:read:own_dept", "skill:create:own_dept", "skill:edit:own_dept", "skill:delete:own_dept",
+            "org:departments:read",
         ],
         "is_system": True,
     },
@@ -194,6 +220,7 @@ ROLE_PRESETS: dict[str, dict] = {
         "permissions": [
             "doc:read:all", "doc:create:all", "doc:edit:all", "doc:delete:all",
             "wiki:read:all", "wiki:write:all", "wiki:delete:all",
+            "skill:read:all", "skill:create:all", "skill:edit:all", "skill:delete:all",
         ],
         "is_system": True,
     },
@@ -234,19 +261,9 @@ LEGACY_PERMISSION_MAP: dict[str, list[str]] = {
     "scopes.read":         [],  # Removed
     "scopes.manage":       [],  # Removed
     "audit.read":          ["org:audit:read"],
-    # Compound legacy
-    "kb.upload":           ["doc:create:own_dept"],
-    "kb.manage":           ["doc:read:own_dept", "doc:create:own_dept", "doc:edit:own_dept", "doc:delete:own_dept",
-                            "wiki:read:own_dept", "wiki:write:own_dept", "wiki:delete:own_dept"],
-    "departments.manage":  ["org:departments:read", "org:departments:manage"],
-    "employees.manage":    ["org:employees:read", "org:employees:manage"],
-    "projects.manage":     [],
-    "projects.read":       [],
-    "settings.manage":     ["org:settings:read", "org:settings:manage"],
-    # Contacts (removed in 009_drop_contacts)
-    "contacts.manage":     [],
-    "contacts.read":       [],
-    "contacts.create":     [],
-    "contacts.edit":       [],
-    "contacts.delete":     [],
+    # AI Skills (legacy mapping)
+    "skills.read":         ["skill:read:own_dept"],
+    "skills.create":       ["skill:create:own_dept"],
+    "skills.edit":         ["skill:edit:own_dept"],
+    "skills.delete":       ["skill:delete:own_dept"],
 }

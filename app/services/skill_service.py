@@ -101,7 +101,14 @@ class SkillService:
 
     @staticmethod
     async def upload_skills(
-        db: AsyncSession, files: List[Any], categories: Optional[str], department_id: Optional[uuid.UUID], force: bool, current_user_id: uuid.UUID
+        db: AsyncSession, 
+        files: List[Any], 
+        categories: Optional[str], 
+        department_id: Optional[uuid.UUID], 
+        scope_type: str,
+        scope_id: Optional[uuid.UUID],
+        force: bool, 
+        current_user_id: uuid.UUID
     ) -> List[Any]:
         pool = await get_arq_pool()
         tag_names = [c.strip().lower() for c in categories.split(",")] if categories else []
@@ -132,8 +139,16 @@ class SkillService:
                     if not force:
                         duplicates.append(name)
                         continue
-                    if department_id:
-                        existing_skill.department_id = department_id
+                    # Always prioritize department_id for Skills
+                    if scope_type == "department" or department_id:
+                        existing_skill.scope_type = "department"
+                        existing_skill.scope_id = scope_id or department_id
+                        existing_skill.department_id = scope_id or department_id
+                    else:
+                        existing_skill.scope_type = "global"
+                        existing_skill.scope_id = None
+                        existing_skill.department_id = None
+
                     
                     existing_tag_ids = {t.id for t in existing_skill.tags}
                     for t in tag_objs:
@@ -150,9 +165,14 @@ class SkillService:
                     existing_skill.version_hash = file_hash
                     returned_obj = existing_skill
                 else:
+                    # For skills, we only care about department vs global
+                    effective_dept_id = scope_id if scope_type == "department" else department_id
                     new_skill = Skill(
                         name=name, slug=slugify(name), status="processing", current_version=1,
-                        version_hash=file_hash, tags=tag_objs, department_id=department_id
+                        version_hash=file_hash, tags=tag_objs, 
+                        department_id=effective_dept_id,
+                        scope_type="department" if effective_dept_id else "global",
+                        scope_id=effective_dept_id
                     )
                     db.add(new_skill)
                     await db.flush()
@@ -269,7 +289,18 @@ class SkillService:
             raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def list_skills(db: AsyncSession, q: Optional[str], tag: Optional[List[str]], department_id: Optional[uuid.UUID], ids: Optional[List[uuid.UUID]], cursor: Optional[str], limit: int) -> Tuple[List[Skill], int]:
+    async def list_skills(
+        db: AsyncSession, 
+        q: Optional[str], 
+        tag: Optional[List[str]], 
+        department_id: Optional[uuid.UUID], 
+        scope_type: Optional[str],
+        scope_id: Optional[uuid.UUID],
+        ids: Optional[List[uuid.UUID]], 
+        cursor: Optional[str], 
+        limit: int,
+        allowed_department_ids: Optional[List[uuid.UUID]] = None
+    ) -> Tuple[List[Skill], int]:
         stmt = select(Skill).options(selectinload(Skill.department), selectinload(Skill.tags)).order_by(Skill.updated_at.desc(), Skill.id.desc())
 
         if cursor:
@@ -277,6 +308,11 @@ class SkillService:
             ref_skill = ref_skill_res.scalars().first()
             if ref_skill:
                 stmt = stmt.where(or_(Skill.updated_at < ref_skill.updated_at, and_(Skill.updated_at == ref_skill.updated_at, Skill.id < ref_skill.id)))
+
+        # --- RBAC Filtering ---
+        if allowed_department_ids is not None:
+            rbac_filter = or_(Skill.department_id.in_(allowed_department_ids), Skill.department_id == None)
+            stmt = stmt.where(rbac_filter)
 
         if q:
             filter_expr = or_(Skill.name.ilike(f"%{q}%"), Skill.description.ilike(f"%{q}%"))
@@ -290,8 +326,18 @@ class SkillService:
 
         if department_id:
             stmt = stmt.where(Skill.department_id == department_id)
+            
+        if scope_type:
+            stmt = stmt.where(Skill.scope_type == scope_type)
+            if scope_id:
+                stmt = stmt.where(Skill.scope_id == scope_id)
 
         count_stmt = select(func.count(func.distinct(Skill.id))).select_from(Skill)
+        
+        # Apply filters to count_stmt as well
+        if allowed_department_ids is not None:
+            count_stmt = count_stmt.where(or_(Skill.department_id.in_(allowed_department_ids), Skill.department_id == None))
+            
         if ids:
             count_stmt = count_stmt.where(Skill.id.in_(ids))
         else:
@@ -301,6 +347,10 @@ class SkillService:
                 count_stmt = count_stmt.join(Skill.tags).where(Tag.name.in_(tag))
             if department_id:
                 count_stmt = count_stmt.where(Skill.department_id == department_id)
+            if scope_type:
+                count_stmt = count_stmt.where(Skill.scope_type == scope_type)
+                if scope_id:
+                    count_stmt = count_stmt.where(Skill.scope_id == scope_id)
 
         total_res = await db.execute(count_stmt)
         total = total_res.scalar() or 0
@@ -321,7 +371,7 @@ class SkillService:
         return len(ids)
 
     @staticmethod
-    async def get_skill(db: AsyncSession, slug: str) -> Skill:
+    async def get_skill(db: AsyncSession, slug: str, version_number: Optional[int] = None) -> Skill:
         try:
             skill_uuid = uuid.UUID(slug)
             stmt = select(Skill).where(Skill.id == skill_uuid)
@@ -332,6 +382,90 @@ class SkillService:
         skill = res.scalars().first()
         if not skill or skill.status == "deleting":
             raise HTTPException(status_code=404, detail="Skill not found")
+            
+        # If a specific version is requested, load its description/content
+        if version_number and version_number != skill.current_version:
+            v_stmt = select(SkillVersion).where(SkillVersion.skill_id == skill.id, SkillVersion.version_number == version_number)
+            v_res = await db.execute(v_stmt)
+            version = v_res.scalars().first()
+            if not version:
+                raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
+            
+            # Try to fetch SKILL.md from this version's storage
+            if version.storage_path:
+                try:
+                    # Try both direct path and skill-named subfolder path
+                    possible_paths = [
+                        f"{version.storage_path.rstrip('/')}/SKILL.md",
+                        f"{version.storage_path.rstrip('/')}/{skill.name}/SKILL.md"
+                    ]
+                    
+                    content_bytes = None
+                    for path in possible_paths:
+                        try:
+                            content_bytes = storage_service.download_file(path)
+                            if content_bytes: 
+                                logger.debug(f"Found SKILL.md at: {path}")
+                                break
+                        except:
+                            continue
+
+                    if content_bytes:
+                        skill.description = content_bytes.decode("utf-8", errors="ignore")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch description for version {version_number}: {e}")
+                    # Keep existing description if fetch fails
+
+        return skill
+
+    @staticmethod
+    async def list_versions(db: AsyncSession, slug: str) -> List[SkillVersion]:
+        skill = await SkillService.get_skill(db, slug)
+        stmt = select(SkillVersion).where(SkillVersion.skill_id == skill.id).order_by(SkillVersion.version_number.desc())
+        res = await db.execute(stmt)
+        return res.scalars().all()
+
+    @staticmethod
+    async def set_latest_version(db: AsyncSession, slug: str, version_number: int) -> Skill:
+        skill = await SkillService.get_skill(db, slug)
+        if version_number == skill.current_version:
+            return skill
+            
+        stmt = select(SkillVersion).where(SkillVersion.skill_id == skill.id, SkillVersion.version_number == version_number)
+        res = await db.execute(stmt)
+        version = res.scalars().first()
+        if not version:
+            raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
+            
+        # Update skill record
+        skill.current_version = version_number
+        skill.version_hash = version.version_hash
+        skill.storage_path = version.storage_path
+        
+        # Sync description from SKILL.md of this version
+        if version.storage_path:
+            try:
+                # Try both direct path and skill-named subfolder path
+                possible_paths = [
+                    f"{version.storage_path.rstrip('/')}/SKILL.md",
+                    f"{version.storage_path.rstrip('/')}/{skill.name}/SKILL.md"
+                ]
+                
+                content_bytes = None
+                for path in possible_paths:
+                    try:
+                        content_bytes = storage_service.download_file(path)
+                        if content_bytes: break
+                    except:
+                        continue
+
+                if content_bytes:
+                    skill.description = content_bytes.decode("utf-8", errors="ignore")
+            except Exception as e:
+                logger.error(f"Failed to sync description while setting latest version: {e}")
+
+        await db.commit()
+        await db.refresh(skill)
         return skill
 
     @staticmethod
@@ -352,6 +486,9 @@ class SkillService:
         increment_version = req_data.get("increment_version", False)
         tags = req_data.get("tags")
         is_department_explicit = "department_id" in req_data.get("_explicit_fields", [])
+        scope_type = req_data.get("scope_type")
+        scope_id = req_data.get("scope_id")
+        is_scope_explicit = "scope_type" in req_data.get("_explicit_fields", [])
 
         if name is not None and name != skill.name:
             stmt = select(Skill).where(Skill.name == name, Skill.id != skill.id)
@@ -377,14 +514,25 @@ class SkillService:
                 object_name = f"{base_path}/SKILL.md"
                 storage_service.upload_file(object_name=object_name, data=description.encode("utf-8"), content_type="text/markdown")
 
-        if department_id is not None:
-            stmt = select(Department).where(Department.id == department_id)
-            res = await db.execute(stmt)
-            if not res.scalars().first():
-                raise HTTPException(status_code=404, detail="Department not found")
-            skill.department_id = department_id
-        elif is_department_explicit and department_id is None:
-            skill.department_id = None
+        # Skill visibility: only Department or Global
+        if scope_type is not None or is_scope_explicit:
+            if scope_type == "department" and scope_id:
+                skill.scope_type = "department"
+                skill.scope_id = scope_id
+                skill.department_id = scope_id
+            else:
+                skill.scope_type = "global"
+                skill.scope_id = None
+                skill.department_id = None
+        elif department_id is not None or is_department_explicit:
+            if department_id:
+                skill.scope_type = "department"
+                skill.scope_id = department_id
+                skill.department_id = department_id
+            else:
+                skill.scope_type = "global"
+                skill.scope_id = None
+                skill.department_id = None
 
         if tags is not None:
             skill.tags = await TagService.get_or_create_tags(db, tags)
@@ -430,9 +578,22 @@ class SkillService:
         return len(skills)
 
     @staticmethod
-    async def bulk_change_department(db: AsyncSession, skill_ids: List[uuid.UUID], department_id: Optional[uuid.UUID]) -> int:
+    async def bulk_change_scope(
+        db: AsyncSession, 
+        skill_ids: List[uuid.UUID], 
+        scope_type: str,
+        scope_id: Optional[uuid.UUID]
+    ) -> int:
         if not skill_ids: return 0
-        stmt = sa.update(Skill).where(Skill.id.in_(skill_ids)).values(department_id=department_id)
+        
+        # Sync department_id for compatibility
+        dept_id = scope_id if scope_type == "department" else None
+        
+        stmt = sa.update(Skill).where(Skill.id.in_(skill_ids)).values(
+            scope_type=scope_type,
+            scope_id=scope_id,
+            department_id=dept_id
+        )
         await db.execute(stmt)
         await db.commit()
         return len(skill_ids)

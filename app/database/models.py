@@ -331,7 +331,6 @@ class Department(Base):
     source_departments: Mapped[list["SourceDepartment"]] = relationship(
         back_populates="department", cascade="all, delete-orphan"
     )
-    sources: Mapped[list["Source"]] = relationship(back_populates="department")
     skills: Mapped[list["Skill"]] = relationship(back_populates="department")
 
 
@@ -543,6 +542,14 @@ class Skill(Base):
         UUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL"),
         nullable=True,
     )
+    scope_type: Mapped[str] = mapped_column(
+        String(20), default="global",
+        comment="Scope type: global, project, department, team",
+    )
+    scope_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="Scope entity ID. Null for global scope.",
+    )
     current_version: Mapped[int] = mapped_column(Integer, default=1)
     version_hash: Mapped[Optional[str]] = mapped_column(String(64))
     storage_path: Mapped[Optional[str]] = mapped_column(String(1000))
@@ -564,7 +571,7 @@ class Skill(Base):
         back_populates="skill", cascade="all, delete-orphan"
     )
     tags: Mapped[list["Tag"]] = relationship(
-        secondary=skill_tags, back_populates="tags"
+        secondary=skill_tags, back_populates="skills"
     )
 
 

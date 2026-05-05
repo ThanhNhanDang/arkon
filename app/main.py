@@ -92,6 +92,7 @@ app = FastAPI(
 )
 
 # --- CORS ---
+logger.info(f"Allowed CORS origins: {settings.cors_origin_list}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -105,7 +106,7 @@ app.add_middleware(
 app.mount("/mcp", mcp_server.http_app(stateless_http=True))
 
 # --- REST API Routers ---
-from app.routers import sources, notes, auth, admin_settings, rbac, knowledge_types, projects, roles, wiki, scopes, audit, skills  # noqa: E402
+from app.routers import sources, notes, auth, admin_settings, rbac, knowledge_types, projects, roles, wiki, audit, skills  # noqa: E402
 
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(sources.router, prefix="/api", tags=["sources"])

@@ -58,7 +58,7 @@ export function AddTagsDialog({ onTagsAdded }: AddTagsDialogProps) {
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger 
         render={
-          <Button variant="outline" size="sm" className="h-8 shadow-sahara">
+          <Button className="h-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sahara">
             <span className="material-symbols-outlined text-sm mr-1">add</span>
             Add Tags
           </Button>

@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export type Skill = {
@@ -34,6 +35,7 @@ export function SkillCard({
   onEdit,
   onClick
 }: SkillCardProps) {
+  const { hasPermission } = useAuth();
   const dateStr = (() => {
     const d = new Date(skill.updated_at);
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
@@ -128,24 +130,28 @@ export function SkillCard({
           >
             Details
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] px-1.5 hover:text-primary whitespace-nowrap"
-            onClick={() => onEdit?.(skill.slug)}
-            disabled={skill.status === "deleting"}
-          >
-            Edit
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] px-1.5 text-destructive hover:text-destructive hover:bg-destructive/10 whitespace-nowrap"
-            onClick={() => onDelete(skill.id, skill.name)}
-            disabled={skill.status === "deleting"}
-          >
-            Delete
-          </Button>
+          {hasPermission("skills.edit") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] px-1.5 hover:text-primary whitespace-nowrap"
+              onClick={() => onEdit?.(skill.slug)}
+              disabled={skill.status === "deleting"}
+            >
+              Edit
+            </Button>
+          )}
+          {hasPermission("skills.delete") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] px-1.5 text-destructive hover:text-destructive hover:bg-destructive/10 whitespace-nowrap"
+              onClick={() => onDelete(skill.id, skill.name)}
+              disabled={skill.status === "deleting"}
+            >
+              Delete
+            </Button>
+          )}
         </div>
       </div>
     </div>

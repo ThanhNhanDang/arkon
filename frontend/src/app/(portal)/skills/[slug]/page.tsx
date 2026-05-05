@@ -3,6 +3,7 @@
 import { api, apiUpload, ApiError } from "@/lib/api";
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
@@ -12,14 +13,31 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Skill } from "@/components/skills/skill-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+interface SkillVersion {
+  version_number: number;
+  created_at: string;
+  changelog?: string;
+}
 
 export default function SkillDetailPage() {
   const { slug } = useParams();
   const router = useRouter();
+  const { canAccess } = useAuth();
   const [skill, setSkill] = useState<Skill | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [versions, setVersions] = useState<SkillVersion[]>([]);
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+  const [isSettingLatest, setIsSettingLatest] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -27,8 +45,12 @@ export default function SkillDetailPage() {
       try {
         setLoading(true);
         setNotFound(false);
-        const data = await api<Skill>(`/api/skills/${slug}`);
+        const url = viewingVersion 
+          ? `/api/skills/${slug}?version=${viewingVersion}` 
+          : `/api/skills/${slug}`;
+        const data = await api<Skill>(url);
         setSkill(data);
+        if (!viewingVersion) setViewingVersion(data.current_version);
       } catch (error) {
         console.error("Failed to load skill:", error);
         if (error instanceof ApiError && error.status === 404) {
@@ -39,6 +61,18 @@ export default function SkillDetailPage() {
       }
     }
     if (slug) loadSkill();
+  }, [slug, viewingVersion]);
+
+  useEffect(() => {
+    async function loadVersions() {
+      try {
+        const data = await api<SkillVersion[]>(`/api/skills/${slug}/versions`);
+        setVersions(data);
+      } catch (error) {
+        console.error("Failed to load versions:", error);
+      }
+    }
+    if (slug) loadVersions();
   }, [slug]);
 
   const handleDelete = async () => {
@@ -48,6 +82,22 @@ export default function SkillDetailPage() {
       router.push("/skills");
     } catch (error) {
       alert("Failed to delete skill");
+    }
+  };
+
+  const handleSetLatest = async () => {
+    if (!skill || !viewingVersion || isSettingLatest) return;
+    if (!confirm(`Are you sure you want to set Version ${viewingVersion} as the official latest version?`)) return;
+
+    try {
+      setIsSettingLatest(true);
+      await api(`/api/skills/${slug}/set-latest?version=${viewingVersion}`, { method: "POST" });
+      alert(`Version ${viewingVersion} is now the latest.`);
+      window.location.reload();
+    } catch (error) {
+      alert("Failed to set latest version");
+    } finally {
+      setIsSettingLatest(false);
     }
   };
 
@@ -143,12 +193,16 @@ export default function SkillDetailPage() {
         description={`Version ${skill.current_version} • Updated ${dateStr}`}
         action={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push(`/skills/${slug}/edit`)}>
-              Edit
-            </Button>
-            <Button variant="destructive" size="sm" onClick={handleDelete}>
-              Delete
-            </Button>
+            {canAccess("skill", "edit") && (
+              <Button variant="outline" size="sm" onClick={() => router.push(`/skills/${slug}/edit`)}>
+                Edit
+              </Button>
+            )}
+            {canAccess("skill", "delete") && (
+              <Button variant="destructive" size="sm" onClick={handleDelete}>
+                Delete
+              </Button>
+            )}
           </div>
         }
       />
@@ -198,8 +252,42 @@ export default function SkillDetailPage() {
             </section>
             
             <section>
-              <h4 className="text-xs font-bold text-muted-foreground uppercase mb-4 tracking-wider">Version</h4>
-              <Badge variant="secondary" className="px-3 py-1 text-sm font-mono">v{skill.current_version}</Badge>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Version History</h4>
+                {viewingVersion !== skill.current_version && (
+                  <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] font-bold">
+                    PREVIEWING OLD
+                  </Badge>
+                )}
+              </div>
+              <div className="space-y-3">
+                <Select 
+                  value={viewingVersion?.toString()} 
+                  onValueChange={(v) => setViewingVersion(parseInt(v))}
+                >
+                  <SelectTrigger className="w-full bg-secondary/5 border-primary/20 h-10">
+                    <SelectValue placeholder="Select version" />
+                  </SelectTrigger>
+                  <SelectContent position="popper" sideOffset={4} className="max-h-60">
+                    {versions.map((v) => (
+                      <SelectItem key={v.version_number} value={v.version_number.toString()}>
+                        Version {v.version_number} 
+                        {v.version_number === skill.current_version && " (Latest)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                  {canAccess("skill", "edit") && viewingVersion !== skill.current_version && (
+                    <Button 
+                      className="w-full bg-primary text-primary-foreground shadow-sahara font-bold text-[11px] uppercase tracking-wider h-10 animate-in fade-in slide-in-from-top-1"
+                      onClick={handleSetLatest}
+                      disabled={isSettingLatest}
+                    >
+                      {isSettingLatest ? "Setting..." : "Set as Official Latest"}
+                    </Button>
+                  )}
+              </div>
             </section>
 
             <section>
@@ -232,30 +320,32 @@ export default function SkillDetailPage() {
               </div>
             </section>
 
-            <section className="pt-6 border-t border-border/50">
-              <h4 className="text-xs font-bold text-muted-foreground uppercase mb-4 tracking-wider">Update Package</h4>
-              <Button 
-                variant="outline" 
-                className="w-full justify-start gap-2 h-10 border-dashed border-primary/30 hover:border-primary hover:bg-primary/5 transition-all text-xs"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-              >
-                <span className={cn("material-symbols-outlined text-base", isUploading && "animate-spin")}>
-                  {isUploading ? "progress_activity" : "upload_file"}
-                </span>
-                {isUploading ? "Uploading..." : "Upload New ZIP"}
-              </Button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept=".zip"
-                onChange={handleZipUpload}
-              />
-              <p className="text-[10px] text-muted-foreground/60 mt-2 italic leading-tight">
-                ZIP filename must be exactly <span className="font-bold text-primary">"{skill.name}.zip"</span>
-              </p>
-            </section>
+            {canAccess("skill", "create") && (
+              <section className="pt-6 border-t border-border/50">
+                <h4 className="text-xs font-bold text-muted-foreground uppercase mb-4 tracking-wider">Update Package</h4>
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start gap-2 h-10 border-dashed border-primary/30 hover:border-primary hover:bg-primary/5 transition-all text-xs"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  <span className={cn("material-symbols-outlined text-base", isUploading && "animate-spin")}>
+                    {isUploading ? "progress_activity" : "upload_file"}
+                  </span>
+                  {isUploading ? "Uploading..." : "Upload New ZIP"}
+                </Button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept=".zip"
+                  onChange={handleZipUpload}
+                />
+                <p className="text-[10px] text-muted-foreground/60 mt-2 italic leading-tight">
+                  ZIP filename must be exactly <span className="font-bold text-primary">"{skill.name}.zip"</span>
+                </p>
+              </section>
+            )}
           </div>
         </div>
       </div>
