@@ -156,7 +156,6 @@ export default function SkillEditPage() {
       <PageHeader
         title="Edit Skill"
         description="Update information, documentation, and metadata for this skill."
-        className="mb-0"
         action={
           <div className="flex items-center gap-2">
             <Button

@@ -11,12 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Skill } from "@/components/skills/skill-card";
+import { EmptyState } from "@/components/shared/empty-state";
 
 export default function SkillDetailPage() {
   const { slug } = useParams();
   const router = useRouter();
   const [skill, setSkill] = useState<Skill | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -24,21 +26,20 @@ export default function SkillDetailPage() {
     async function loadSkill() {
       try {
         setLoading(true);
-        // We now fetch by slug instead of name/ID
+        setNotFound(false);
         const data = await api<Skill>(`/api/skills/${slug}`);
         setSkill(data);
       } catch (error) {
         console.error("Failed to load skill:", error);
         if (error instanceof ApiError && error.status === 404) {
-          alert("Skill not found");
-          router.push("/skills");
+          setNotFound(true);
         }
       } finally {
         setLoading(false);
       }
     }
     if (slug) loadSkill();
-  }, [slug, router]);
+  }, [slug]);
 
   const handleDelete = async () => {
     if (!skill || !confirm(`Are you sure you want to delete ${skill.name}?`)) return;
@@ -94,7 +95,34 @@ export default function SkillDetailPage() {
     );
   }
 
-  if (!skill) return null;
+  if (!skill) {
+    if (notFound) {
+      return (
+        <div className="flex flex-col gap-8 py-12 animate-in fade-in duration-500">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <button 
+              onClick={() => router.push("/skills")}
+              className="flex items-center hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-base mr-1">arrow_back</span>
+              Back to Skills
+            </button>
+          </div>
+          <EmptyState
+            icon="search_off"
+            title="Skill Not Found"
+            description={`We couldn't find a skill with the identifier "${slug}". It might have been deleted or moved.`}
+            action={
+              <Button onClick={() => router.push("/skills")} variant="outline" className="mt-4 shadow-sahara rounded-xl font-bold uppercase tracking-widest text-[11px] h-11 px-8">
+                Return to Library
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
+    return null;
+  }
 
   const dateStr = new Date(skill.updated_at).toLocaleString();
 

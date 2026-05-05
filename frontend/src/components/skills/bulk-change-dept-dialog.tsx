@@ -85,7 +85,7 @@ export function BulkChangeDeptDialog({
             <Label htmlFor="department">New Department</Label>
             <Select 
               value={selectedDeptId} 
-              onValueChange={setSelectedDeptId}
+              onValueChange={(val) => setSelectedDeptId(val ?? "none")}
             >
               <SelectTrigger id="department">
                 <SelectValue placeholder="Select department" />

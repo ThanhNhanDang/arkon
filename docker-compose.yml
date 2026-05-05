@@ -27,6 +27,19 @@ services:
     depends_on:
       - api
 
+  # 2.5 Background Worker (Skills)
+  worker_skills:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arkon_worker_skills
+    restart: always
+    env_file:
+      - .env
+    command: python -m arq app.worker.SkillWorkerSettings
+    depends_on:
+      - api
+
   # 3. Frontend (Next.js)
   frontend:
     build:

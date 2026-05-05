@@ -91,6 +91,19 @@ class StorageService:
         )
         return object_name
 
+    async def upload_stream_async(
+        self,
+        object_name: str,
+        stream: io.IOBase,
+        length: int,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Non-blocking wrapper for upload_stream using asyncio.to_thread."""
+        import asyncio
+        return await asyncio.to_thread(
+            self.upload_stream, object_name, stream, length, content_type
+        )
+
     def get_presigned_url(
         self,
         object_name: str,
