@@ -31,7 +31,7 @@ Knowledge compounds. Every document you add enriches the existing wiki rather th
 ## Features
 
 ### Knowledge Wiki
-Documents are compiled into a persistent, interlinked wiki by an LLM agent - not just indexed. Each page covers a specific entity, concept, or topic. Pages cross-reference each other. The wiki grows smarter as more documents are added.
+Documents are compiled into a persistent, interlinked wiki — not just indexed. The MRP pipeline (MAP → REDUCE → PLAN → REFINE → VERIFY) reads every section of every document, traces every claim back to its source, and lets an editor review the compilation plan before any pages are written. Each page covers a specific entity, concept, or topic. Pages cross-reference each other. The wiki grows smarter as more documents are added.
 
 - Three-panel wiki browser: page tree, content, backlinks & outlinks
 - Full-text and semantic search
@@ -133,7 +133,7 @@ Add this to `claude_desktop_config.json` and restart Claude Desktop. The employe
 
 ## Roadmap
 
-- [x] LLM Wiki Agent - documents compiled into persistent, interlinked wiki
+- [x] MRP Pipeline - deterministic MAP→REDUCE→PLAN→REFINE→VERIFY compilation with full document coverage, traceable citations, and human plan review
 - [x] Wiki browser - three-panel layout with graph visualization
 - [x] MCP Server with scoped knowledge access
 - [x] Ingestion pipeline - PDF, DOCX, DOC, URLs, images with vision captions
@@ -142,7 +142,6 @@ Add this to `claude_desktop_config.json` and restart Claude Desktop. The employe
 - [x] AI Skills - versioned, department-scoped agent packages
 - [x] Full RBAC - department permissions + workspace membership roles
 - [x] Audit log
-- [ ] Regex Search for Human and AI
 - [ ] Arkon CLI - one-command employee setup
 - [ ] Notification system for draft review requests
 - [ ] Usage analytics dashboard
