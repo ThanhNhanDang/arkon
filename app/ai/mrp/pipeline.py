@@ -76,21 +76,34 @@ async def run_commit_phase(
 
     for pr in page_results:
         try:
+            # Acquire advisory lock for this slug to prevent race conditions
+            from sqlalchemy import select, func
+            await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(pr.slug))))
+
             if pr.action == "CREATE":
-                page = await wiki_service.apply_create(
-                    session,
-                    slug=pr.slug,
-                    title=pr.title,
-                    page_type=pr.page_type,
-                    content_md=pr.content_md,
-                    summary=pr.summary,
-                    knowledge_type_slugs=[kt_slug] if kt_slug else [],
-                    source_ids=[source.id],
-                    scope_type=scope_type,
-                    scope_id=scope_id,
+                # Check if it was created by someone else after the plan was generated
+                existing = await wiki_service.get_page_by_slug(
+                    session, pr.slug, scope_type=scope_type, scope_id=scope_id
                 )
-                pages_created += 1
-            else:
+                if existing is not None:
+                    # Fallback to update
+                    pr.action = "UPDATE"
+                else:
+                    page = await wiki_service.apply_create(
+                        session,
+                        slug=pr.slug,
+                        title=pr.title,
+                        page_type=pr.page_type,
+                        content_md=pr.content_md,
+                        summary=pr.summary,
+                        knowledge_type_slugs=[kt_slug] if kt_slug else [],
+                        source_ids=[source.id],
+                        scope_type=scope_type,
+                        scope_id=scope_id,
+                    )
+                    pages_created += 1
+
+            if pr.action == "UPDATE":
                 # UPDATE: merge new content with existing page
                 existing_page = await wiki_service.get_page_by_slug(
                     session, pr.slug, scope_type=scope_type, scope_id=scope_id,
