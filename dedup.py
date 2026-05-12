@@ -1,11 +1,10 @@
 import asyncio
 from sqlalchemy import select
-# pyrefly: ignore [missing-import]
-from app.database.core import async_session_maker
+from app.database import async_session_factory
 from app.database.models import WikiPage
 
 async def deduplicate():
-    async with async_session_maker() as session:
+    async with async_session_factory() as session:
         result = await session.execute(select(WikiPage))
         pages = result.scalars().all()
         

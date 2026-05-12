@@ -398,6 +398,11 @@ async def upsert_page(
     scope_id: Optional[uuid.UUID] = None,
 ) -> WikiPage:
     """Create-or-update by slug within a scope."""
+    # Acquire a transaction-level advisory lock based on the hash of the slug
+    # to serialize concurrent upserts for the exact same page.
+    lock_query = select(func.pg_advisory_xact_lock(func.hashtext(slug)))
+    await session.execute(lock_query)
+
     existing = await get_page_by_slug(session, slug, scope_type=scope_type, scope_id=scope_id)
     if existing is None:
         return await apply_create(
