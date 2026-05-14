@@ -21,7 +21,13 @@ from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import WikiLink, WikiPage, WikiPageDraft, WikiPageRevision
+from app.database.models import (
+    WikiLink,
+    WikiPage,
+    WikiPageDepartment,
+    WikiPageDraft,
+    WikiPageRevision,
+)
 
 # Reserved page slugs — these are regular WikiPage rows but treated specially.
 INDEX_SLUG = "_index"
@@ -46,13 +52,48 @@ def _scope_filter(scope_type: str = "global", scope_id: Optional[uuid.UUID] = No
 
 
 def _scope_filter_with_dept(department_id: Optional[uuid.UUID] = None):
-    """OR-filter: global pages + department pages visible to the given dept member."""
+    """OR-filter: global pages visible to the given dept member.
+
+    Visibility under wiki:read:own_dept = (global pages) UNION (global pages
+    tagged with the user's department via wiki_page_departments). Since dept-
+    tagged pages are themselves stored as scope_type='global' after migration
+    021, both branches sit on the global scope; the dept branch just narrows
+    further by membership in the junction table.
+    """
     if department_id:
-        return or_(
-            and_(WikiPage.scope_type == "global", WikiPage.scope_id.is_(None)),
-            and_(WikiPage.scope_type == "department", WikiPage.scope_id == department_id),
+        return and_(
+            WikiPage.scope_type == "global",
+            WikiPage.scope_id.is_(None),
+            or_(
+                # Untagged global pages — visible to everyone.
+                ~WikiPage.id.in_(select(WikiPageDepartment.page_id)),
+                # Tagged for this department.
+                WikiPage.id.in_(
+                    select(WikiPageDepartment.page_id)
+                    .where(WikiPageDepartment.department_id == department_id)
+                ),
+            ),
         )
     return _scope_filter("global")
+
+
+async def set_page_departments(
+    session: AsyncSession,
+    page_id: uuid.UUID,
+    department_ids: list[uuid.UUID],
+) -> None:
+    """Replace the dept tag set for a page. Empty list → untag (page becomes
+    visible to all with wiki:read).
+    """
+    await session.execute(
+        delete(WikiPageDepartment).where(WikiPageDepartment.page_id == page_id)
+    )
+    if department_ids:
+        await session.execute(
+            pg_insert(WikiPageDepartment)
+            .values([{"page_id": page_id, "department_id": d} for d in department_ids])
+            .on_conflict_do_nothing()
+        )
 
 
 # ---------------------------------------------------------------------------

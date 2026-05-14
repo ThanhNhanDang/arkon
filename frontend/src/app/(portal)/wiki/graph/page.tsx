@@ -21,8 +21,12 @@ export default function WikiGraphPage() {
   const [loading, setLoading] = React.useState(true);
   const [loadProgress, setLoadProgress] = React.useState<{ loaded: number; total: number } | null>(null);
   const [activeTypes, setActiveTypes] = React.useState<Set<string>>(new Set(PAGE_TYPES));
+  // null = show all (no dept filter). A Set means: show only nodes that have
+  // at least one dept in the set, plus untagged nodes if "__none__" is in the set.
+  const [activeDepts, setActiveDepts] = React.useState<Set<string> | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [highlightSlug, setHighlightSlug] = React.useState<string | null>(null);
+  const [deptMenuOpen, setDeptMenuOpen] = React.useState(false);
 
   // Preview panel states
   const [previewSlug, setPreviewSlug] = React.useState<string | null>(null);
@@ -94,15 +98,36 @@ export default function WikiGraphPage() {
       .finally(() => setPreviewLoading(false));
   }, [previewSlug]);
 
+  const allDepts = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of graphData.nodes) {
+      for (const d of n.departments ?? []) m.set(d.id, d.name);
+    }
+    return Array.from(m.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [graphData]);
+
   const filteredData = React.useMemo(() => {
     if (graphData.nodes.length === 0) return null;
-    const nodes = graphData.nodes.filter((n) => activeTypes.has(n.page_type));
+    const nodes = graphData.nodes.filter((n) => {
+      if (!activeTypes.has(n.page_type)) return false;
+      if (activeDepts !== null) {
+        const tags = n.departments ?? [];
+        if (tags.length === 0) {
+          if (!activeDepts.has("__none__")) return false;
+        } else {
+          if (!tags.some((d) => activeDepts.has(d.id))) return false;
+        }
+      }
+      return true;
+    });
     const slugSet = new Set(nodes.map((n) => n.slug));
     const edges = graphData.edges.filter(
       (e) => slugSet.has(e.from) && slugSet.has(e.to)
     );
     return { nodes, edges };
-  }, [graphData, activeTypes]);
+  }, [graphData, activeTypes, activeDepts]);
 
   const searchMatches = React.useMemo(() => {
     if (!searchQuery || graphData.nodes.length === 0) return [];
@@ -116,6 +141,18 @@ export default function WikiGraphPage() {
     setActiveTypes((prev) => {
       const next = new Set(prev);
       next.has(type) ? next.delete(type) : next.add(type);
+      return next;
+    });
+  };
+
+  const toggleDept = (id: string) => {
+    setActiveDepts((prev) => {
+      const allKeys = [...allDepts.map((d) => d.id), "__none__"];
+      const base = prev ?? new Set(allKeys);
+      const next = new Set(base);
+      next.has(id) ? next.delete(id) : next.add(id);
+      // If user re-selected everything, drop the filter entirely.
+      if (allKeys.every((k) => next.has(k))) return null;
       return next;
     });
   };
@@ -210,6 +247,78 @@ export default function WikiGraphPage() {
                 );
               })}
             </div>
+
+            {/* Department filter */}
+            {allDepts.length > 0 && (
+              <div className="relative border-l border-border pl-2 ml-1">
+                <button
+                  onClick={() => setDeptMenuOpen((v) => !v)}
+                  className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-all border border-transparent hover:bg-accent/40 text-muted-foreground"
+                  title="Filter by department"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>groups</span>
+                  <span className="hidden sm:inline">
+                    {activeDepts === null
+                      ? "All departments"
+                      : `${activeDepts.size} selected`}
+                  </span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                    {deptMenuOpen ? "expand_less" : "expand_more"}
+                  </span>
+                </button>
+                {deptMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setDeptMenuOpen(false)}
+                    />
+                    <div className="absolute top-full right-0 mt-1 z-20 bg-card border border-border rounded-xl shadow-lg py-1 max-h-72 overflow-y-auto w-56">
+                      <button
+                        onClick={() => setActiveDepts(null)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                          select_all
+                        </span>
+                        <span>Show all</span>
+                      </button>
+                      <div className="border-t border-border/60 my-1" />
+                      <button
+                        onClick={() => toggleDept("__none__")}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent/50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          readOnly
+                          checked={activeDepts === null || activeDepts.has("__none__")}
+                          className="pointer-events-none"
+                        />
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>public</span>
+                        <span className="text-foreground">Global (untagged)</span>
+                      </button>
+                      {allDepts.map((d) => {
+                        const checked = activeDepts === null || activeDepts.has(d.id);
+                        return (
+                          <button
+                            key={d.id}
+                            onClick={() => toggleDept(d.id)}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent/50 transition-colors"
+                          >
+                            <input
+                              type="checkbox"
+                              readOnly
+                              checked={checked}
+                              className="pointer-events-none"
+                            />
+                            <span className="text-foreground truncate">{d.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

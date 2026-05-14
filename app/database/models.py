@@ -302,8 +302,37 @@ class WikiPage(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    departments: Mapped[list["Department"]] = relationship(
+        "Department",
+        secondary="wiki_page_departments",
+        lazy="selectin",
+    )
+
     __table_args__ = (
         Index("ix_wiki_pages_page_type", "page_type"),
+    )
+
+
+class WikiPageDepartment(Base):
+    """Many-to-many: WikiPage ↔ Department.
+
+    A page with NO rows here is considered global (visible to everyone with
+    wiki:read). One row per (page, dept) tags the page as visible to that
+    department under wiki:read:own_dept scope. Mirrors SourceDepartment.
+    """
+    __tablename__ = "wiki_page_departments"
+
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wiki_pages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("departments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    __table_args__ = (
+        Index("ix_wiki_page_departments_dept", "department_id", "page_id"),
     )
 
 
@@ -520,6 +549,11 @@ class Department(Base):
     )
     skill_departments: Mapped[list["SkillDepartment"]] = relationship(
         back_populates="department", cascade="all, delete-orphan"
+    )
+    wiki_pages: Mapped[list["WikiPage"]] = relationship(
+        "WikiPage",
+        secondary="wiki_page_departments",
+        viewonly=True,
     )
 
 

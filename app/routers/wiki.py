@@ -20,7 +20,13 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.database.models import Employee, ProjectMember, WikiPage, WikiPageRevision
+from app.database.models import (
+    Employee,
+    ProjectMember,
+    WikiPage,
+    WikiPageDepartment,
+    WikiPageRevision,
+)
 from app.services import wiki_service
 from app.services.audit_service import log_audit
 from app.services.auth_service import get_current_user, require_permission
@@ -34,6 +40,11 @@ from app.services.permission_engine import (
 router = APIRouter()
 
 
+class DepartmentRef(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
 class WikiPageSummary(BaseModel):
     slug: str
     title: str
@@ -43,6 +54,7 @@ class WikiPageSummary(BaseModel):
     source_ids: list[uuid.UUID]
     scope_type: str = "global"
     scope_id: Optional[uuid.UUID] = None
+    departments: list[DepartmentRef] = []
     version: int
     updated_at: str
 
@@ -85,6 +97,7 @@ def _summary(p: WikiPage) -> WikiPageSummary:
         source_ids=list(p.source_ids or []),
         scope_type=p.scope_type or "global",
         scope_id=p.scope_id,
+        departments=[DepartmentRef(id=d.id, name=d.name) for d in (p.departments or [])],
         version=p.version or 1,
         updated_at=p.updated_at.isoformat() if p.updated_at else "",
     )
@@ -116,16 +129,27 @@ def _build_wiki_scope_filter(user: Employee):
         return None  # No filter
 
     if scope_level == "own_dept":
-        # Show: global wiki + project-scoped wiki where user is a member + dept wiki for user's dept
+        # Show:
+        #   1. Global pages with NO department tags (visible to everyone).
+        #   2. Global pages tagged with the user's department.
+        #   3. Project-scoped pages where user is a member.
         return or_(
-            WikiPage.scope_type == "global",
-            WikiPage.scope_id.in_(
-                select(ProjectMember.project_id)
-                .where(ProjectMember.employee_id == user.id)
+            and_(
+                WikiPage.scope_type == "global",
+                or_(
+                    ~WikiPage.id.in_(select(WikiPageDepartment.page_id)),
+                    WikiPage.id.in_(
+                        select(WikiPageDepartment.page_id)
+                        .where(WikiPageDepartment.department_id == user.department_id)
+                    ),
+                ),
             ),
             and_(
-                WikiPage.scope_type == "department",
-                WikiPage.scope_id == user.department_id,
+                WikiPage.scope_type == "project",
+                WikiPage.scope_id.in_(
+                    select(ProjectMember.project_id)
+                    .where(ProjectMember.employee_id == user.id)
+                ),
             ),
         )
 
@@ -200,12 +224,17 @@ async def get_wiki_page(
                 if not member:
                     raise HTTPException(403, "Access denied — you are not a member of this workspace")
 
-    if page.scope_type == "department" and page.scope_id:
-        if user.role != "admin":
-            perms = _get_user_permissions(user)
-            if "wiki:read:all" not in perms:
-                if user.department_id != page.scope_id:
-                    raise HTTPException(403, "Access denied — this page belongs to another department")
+    # Department tag check: global pages may be restricted to specific departments
+    # via wiki_page_departments. No tags = visible to all (with wiki:read).
+    if page.scope_type == "global" and user.role != "admin":
+        perms = _get_user_permissions(user)
+        if "wiki:read:all" not in perms:
+            tagged_dept_ids = {d.id for d in page.departments}
+            if tagged_dept_ids and user.department_id not in tagged_dept_ids:
+                raise HTTPException(
+                    403,
+                    "Access denied — this page is restricted to other departments",
+                )
 
     backlinks = await wiki_service.get_backlinks(db, slug)
     outlinks = await wiki_service.get_outlinks(db, slug)
@@ -389,7 +418,7 @@ async def get_wiki_graph(
     from sqlalchemy import func as sqlfunc
     from sqlalchemy import outerjoin
 
-    from app.database.models import Project, WikiLink
+    from app.database.models import Department, Project, WikiLink
 
     base_filter = WikiPage.slug.notin_([wiki_service.INDEX_SLUG, wiki_service.LOG_SLUG])
 
@@ -405,6 +434,7 @@ async def get_wiki_graph(
     # Fetch paginated nodes
     stmt = (
         select(
+            WikiPage.id,
             WikiPage.slug,
             WikiPage.title,
             WikiPage.page_type,
@@ -425,6 +455,23 @@ async def get_wiki_graph(
 
     pages = (await db.execute(stmt)).all()
 
+    # Department tags — fetch in batch for this page slice
+    page_ids = [r.id for r in pages]
+    dept_map: dict[uuid.UUID, list[dict]] = {pid: [] for pid in page_ids}
+    if page_ids:
+        dept_rows = (await db.execute(
+            select(
+                WikiPageDepartment.page_id,
+                Department.id,
+                Department.name,
+            )
+            .join(Department, Department.id == WikiPageDepartment.department_id)
+            .where(WikiPageDepartment.page_id.in_(page_ids))
+            .order_by(Department.name)
+        )).all()
+        for page_id, dept_id, dept_name in dept_rows:
+            dept_map[page_id].append({"id": str(dept_id), "name": dept_name})
+
     # Edges — return ALL on first batch (offset=0)
     if offset == 0:
         edges = (await db.execute(
@@ -442,6 +489,7 @@ async def get_wiki_graph(
                 "scope_type": r.scope_type or "global",
                 "scope_id": str(r.scope_id) if r.scope_id else None,
                 "scope_name": r.scope_name,
+                "departments": dept_map.get(r.id, []),
             }
             for r in pages
         ],

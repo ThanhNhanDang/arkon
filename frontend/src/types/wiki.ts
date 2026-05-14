@@ -1,5 +1,10 @@
 export type WikiPageType = "entity" | "concept" | "topic" | "source" | "index" | "log";
 
+export type DepartmentRef = {
+  id: string;
+  name: string;
+};
+
 export type WikiPageSummary = {
   slug: string;
   title: string;
@@ -9,6 +14,7 @@ export type WikiPageSummary = {
   source_ids: string[];
   scope_type?: string;
   scope_id?: string;
+  departments?: DepartmentRef[];
   version: number;
   updated_at: string;
 };
@@ -27,6 +33,7 @@ export type WikiGraphNode = {
   scope_type?: string;
   scope_id?: string | null;
   scope_name?: string | null;
+  departments?: DepartmentRef[];
   // injected by d3-force simulation
   x?: number;
   y?: number;

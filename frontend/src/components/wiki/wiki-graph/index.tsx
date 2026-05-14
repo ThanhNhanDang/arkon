@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { forceX, forceY } from "d3-force";
 import { wikiTypeColor, wikiTypeGroupLabel, wikiTypeIcon } from "../wiki-type-badge";
-import { NodeInput } from "./types";
+import { DepartmentRef, NodeInput } from "./types";
 import { convexHull, scopeColor, nodeRadius } from "./utils";
 
 // react-force-graph-2d uses canvas APIs (no SSR).
@@ -75,6 +75,7 @@ export function WikiGraph({
     degree: number;
     scopeType?: string;
     scopeName?: string | null;
+    departments?: DepartmentRef[];
   } | null>(null);
 
   // Measure container.
@@ -95,6 +96,23 @@ export function WikiGraph({
   // state (vx, vy, x, y, alpha) intact when only the hover state changes.
   const nodeMapRef = React.useRef<Map<string, Node>>(new Map());
 
+  // Stable dept → index map so colors and target X coords stay consistent
+  // across renders. Sorted by name for deterministic ordering.
+  const deptOrder = React.useMemo(() => {
+    const names = new Map<string, string>(); // id → name
+    for (const n of rawNodes) {
+      for (const d of n.departments ?? []) names.set(d.id, d.name);
+    }
+    return Array.from(names.entries())
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([id, name], idx) => ({ id, name, idx }));
+  }, [rawNodes]);
+  const deptIndexById = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of deptOrder) m.set(d.id, d.idx);
+    return m;
+  }, [deptOrder]);
+
   // Build graph data + adjacency (memo so the simulation only re-warms when
   // raw inputs change, not on every parent render).
   const { nodes, links, adjacency, components, componentTargetX } = React.useMemo(() => {
@@ -114,6 +132,7 @@ export function WikiGraph({
         existing.page_type = n.page_type;
         existing.scope_type = n.scope_type;
         existing.scope_name = n.scope_name;
+        existing.departments = n.departments;
         existing.degree = degree;
         return existing;
       }
@@ -173,13 +192,37 @@ export function WikiGraph({
     // Spread components horizontally so they don't all collide into one blob.
     const margin = dimensions.w * 0.15;
     const usable = Math.max(dimensions.w - 2 * margin, 1);
+    const deptCount = deptOrder.length;
+    const deptTargetX = (idx: number) =>
+      deptCount <= 1 ? 0 : -usable / 2 + (usable * idx) / (deptCount - 1);
+
     for (const n of nodes) {
+      // Connected-component target — preserves Obsidian-style spread when
+      // there are no dept tags.
       const c = components.get(n.id) ?? 0;
-      // Map component target X around 0
-      n.__targetX =
+      const compX =
         componentTargetX <= 1
           ? 0
           : -usable / 2 + (usable * c) / (componentTargetX - 1);
+
+      // Department target — average X of all depts this node belongs to.
+      const depts = n.departments ?? [];
+      if (depts.length > 0 && deptCount > 1) {
+        let sum = 0;
+        let cnt = 0;
+        for (const d of depts) {
+          const idx = deptIndexById.get(d.id);
+          if (idx !== undefined) {
+            sum += deptTargetX(idx);
+            cnt++;
+          }
+        }
+        const deptX = cnt > 0 ? sum / cnt : 0;
+        // Bias toward dept clustering (0.7) but keep some component spread.
+        n.__targetX = deptX * 0.7 + compX * 0.3;
+      } else {
+        n.__targetX = compX;
+      }
     }
 
     fg.d3Force(
@@ -211,7 +254,7 @@ export function WikiGraph({
     }
 
     fg.d3ReheatSimulation();
-  }, [nodes, components, componentTargetX, centerSlug, dimensions.w, dimensions.h, mini]);
+  }, [nodes, components, componentTargetX, centerSlug, dimensions.w, dimensions.h, mini, deptOrder, deptIndexById]);
 
   // Auto fit-to-canvas when the simulation cools down.
   const hasFitRef = React.useRef(false);
@@ -350,31 +393,34 @@ export function WikiGraph({
     [hoverVersion]
   );
 
-  // --- Scope hulls (workspace boundaries) drawn beneath nodes ---
+  // --- Scope hulls (workspace + department boundaries) drawn beneath nodes ---
   const drawScopeHulls = React.useCallback(
     (ctx: CanvasRenderingContext2D) => {
       if (mini) return;
-      // Group project-scoped nodes by scope_name.
-      const groups: Record<string, Node[]> = {};
-      for (const n of nodes) {
-        if (n.scope_type !== "project" || n.x === undefined || n.y === undefined) continue;
-        const key = n.scope_name || "Workspace";
-        (groups[key] ||= []).push(n);
-      }
-      const entries = Object.entries(groups);
-      entries.forEach(([key, gnodes], idx) => {
-        const points: [number, number][] = gnodes.map((n) => [n.x!, n.y!]);
+
+      type HullStyle = {
+        color: string;
+        fillAlphaHex: string; // 2-hex appended to color → fill alpha
+        lineDash: [number, number];
+        lineWidth: number;
+        outlineAlpha: number;
+      };
+
+      const drawHull = (gnodes: Node[], label: string, style: HullStyle) => {
+        const points: [number, number][] = gnodes
+          .filter((n) => n.x !== undefined && n.y !== undefined)
+          .map((n) => [n.x!, n.y!]);
+        if (points.length === 0) return;
         const hull = convexHull(points);
         if (hull.length === 0) return;
         const padding = 30;
 
-        // Expand hull outward and draw smooth curve via quadratic curves.
         const cx = hull.reduce((s, p) => s + p[0], 0) / hull.length;
         const cy = hull.reduce((s, p) => s + p[1], 0) / hull.length;
+        void cy;
         const expanded =
           hull.length === 1
-            ? // For single-node groups, draw a circle.
-              null
+            ? null
             : hull.map(([x, y]) => {
                 const dx = x - cx;
                 const dy = y - cy;
@@ -382,21 +428,18 @@ export function WikiGraph({
                 return [x + (dx / len) * padding, y + (dy / len) * padding] as [number, number];
               });
 
-        const color = scopeColor(idx);
-
         ctx.save();
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.fillStyle = color + "12"; // ~7% alpha
-        ctx.globalAlpha = 0.85;
+        ctx.setLineDash(style.lineDash);
+        ctx.strokeStyle = style.color;
+        ctx.lineWidth = style.lineWidth;
+        ctx.fillStyle = style.color + style.fillAlphaHex;
+        ctx.globalAlpha = style.outlineAlpha;
 
         ctx.beginPath();
         if (expanded == null) {
           const [x, y] = hull[0];
           ctx.arc(x, y, padding, 0, 2 * Math.PI);
         } else if (expanded.length === 2) {
-          // Stadium shape between two points.
           const [x1, y1] = expanded[0];
           const [x2, y2] = expanded[1];
           ctx.moveTo(x1, y1);
@@ -421,17 +464,53 @@ export function WikiGraph({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Scope label above the hull.
         const topY = Math.min(...points.map((p) => p[1])) - padding - 6;
-        ctx.fillStyle = color;
+        ctx.fillStyle = style.color;
         ctx.font = "600 10px sans-serif";
         ctx.textAlign = "center";
         ctx.globalAlpha = 0.7;
-        ctx.fillText(key, cx, topY);
+        ctx.fillText(label, cx, topY);
         ctx.restore();
+      };
+
+      // Layer 1: department hulls (fainter, drawn first → nodes in multiple
+      // depts naturally land in overlapping regions).
+      const deptGroups = new Map<string, { name: string; nodes: Node[] }>();
+      for (const n of nodes) {
+        for (const d of n.departments ?? []) {
+          if (!deptGroups.has(d.id)) deptGroups.set(d.id, { name: d.name, nodes: [] });
+          deptGroups.get(d.id)!.nodes.push(n);
+        }
+      }
+      for (const [deptId, { name, nodes: dnodes }] of deptGroups.entries()) {
+        const idx = deptIndexById.get(deptId) ?? 0;
+        drawHull(dnodes, name, {
+          color: scopeColor(idx),
+          fillAlphaHex: "0d", // ~5% alpha
+          lineDash: [4, 6],
+          lineWidth: 1,
+          outlineAlpha: 0.55,
+        });
+      }
+
+      // Layer 2: project (workspace) hulls — drawn on top with stronger style.
+      const projectGroups: Record<string, Node[]> = {};
+      for (const n of nodes) {
+        if (n.scope_type !== "project") continue;
+        const key = n.scope_name || "Workspace";
+        (projectGroups[key] ||= []).push(n);
+      }
+      Object.entries(projectGroups).forEach(([key, pnodes], idx) => {
+        drawHull(pnodes, key, {
+          color: scopeColor(idx + deptGroups.size),
+          fillAlphaHex: "1f", // ~12% alpha
+          lineDash: [6, 4],
+          lineWidth: 1.2,
+          outlineAlpha: 0.85,
+        });
       });
     },
-    [mini, nodes]
+    [mini, nodes, deptIndexById]
   );
 
   const handleNodeClick = React.useCallback(
@@ -470,6 +549,7 @@ export function WikiGraph({
         degree: n.degree ?? 0,
         scopeType: n.scope_type,
         scopeName: n.scope_name,
+        departments: n.departments,
       }));
     }
   }, []);
@@ -488,6 +568,21 @@ export function WikiGraph({
       counts[label] = (counts[label] ?? 0) + 1;
     }
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [rawNodes]);
+
+  // Department counts — a page tagged with 2 depts contributes to both.
+  const deptCounts = React.useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>();
+    for (const n of rawNodes) {
+      for (const d of n.departments ?? []) {
+        const cur = counts.get(d.id);
+        if (cur) cur.count++;
+        else counts.set(d.id, { name: d.name, count: 1 });
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+      .sort((a, b) => b.count - a.count);
   }, [rawNodes]);
 
   return (
@@ -571,6 +666,16 @@ export function WikiGraph({
               </span>
             </div>
           )}
+          {tooltip.departments && tooltip.departments.length > 0 && (
+            <div className="flex items-center gap-1.5 mt-1 text-muted-foreground">
+              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>
+                groups
+              </span>
+              <span className="truncate">
+                {tooltip.departments.map((d) => d.name).join(", ")}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -625,6 +730,32 @@ export function WikiGraph({
                     <span className="text-muted-foreground/60 ml-auto tabular-nums">{count}</span>
                   </div>
                 ))}
+              </div>
+            </>
+          )}
+          {deptCounts.length > 0 && (
+            <>
+              <div className="mt-2 pt-2 border-t border-border/50 mb-1.5 font-semibold text-foreground text-xs">
+                Departments
+              </div>
+              <div className="flex flex-col gap-1">
+                {deptCounts.map((d) => {
+                  const idx = deptIndexById.get(d.id) ?? 0;
+                  const color = scopeColor(idx);
+                  return (
+                    <div
+                      key={d.id}
+                      className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent/30 transition-colors"
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ background: color }}
+                      />
+                      <span className="text-muted-foreground truncate">{d.name}</span>
+                      <span className="text-muted-foreground/60 ml-auto tabular-nums">{d.count}</span>
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
