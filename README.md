@@ -194,10 +194,10 @@ For stronger enforcement, create a **Project** in Claude Desktop, attach Arkon a
 - [x] **Online embedding migration** - atomic re-embed with no search downtime.
 - [x] **Audit log** - privileged actions tracked.
 - [ ] **Rich media ingestion** - bulk folder upload with images, videos, and Excel/spreadsheet parsing baked into the MRP pipeline.
+- [x] **Usage analytics dashboard**
 - [ ] **External data import** - connectors for SharePoint, Google Drive, Notion, and other common org data sources.
 - [ ] **Arkon CLI** - one-command setup for employees.
 - [ ] **Notification system** - for draft reviews and plan approvals.
-- [ ] **Usage analytics dashboard** - cost + adoption per department.
 
 ---
 
