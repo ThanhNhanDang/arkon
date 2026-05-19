@@ -707,15 +707,23 @@ class DraftConflictError(Exception):
 
 async def create_draft(
     session: AsyncSession,
-    page_id: uuid.UUID,
+    page_id: Optional[uuid.UUID],
     author_id: uuid.UUID,
     content_md: str,
     note: Optional[str] = None,
     source: str = "web_ui",
     source_metadata: Optional[dict] = None,
     base_version: Optional[int] = None,
+    draft_kind: str = "edit",
+    suggested_metadata: Optional[dict] = None,
 ) -> WikiPageDraft:
-    """Create a pending draft for editor review."""
+    """Create a pending draft for editor review.
+
+    For draft_kind='edit', page_id is required. For 'create', page_id stays
+    None and suggested_metadata holds the contributor's proposed slug/title/
+    page_type/knowledge_type_slugs/scope. The reviewer can override the
+    metadata at approve time before the page is materialised.
+    """
     draft = WikiPageDraft(
         page_id=page_id,
         author_id=author_id,
@@ -725,10 +733,25 @@ async def create_draft(
         source=source,
         source_metadata=source_metadata,
         base_version=base_version,
+        draft_kind=draft_kind,
+        suggested_metadata=suggested_metadata,
     )
     session.add(draft)
     await session.flush()
     return draft
+
+
+class CreateDraftSlugConflict(Exception):
+    """Raised when approving a create-draft whose slug already exists in scope."""
+    def __init__(self, slug: str, scope_type: str, scope_id: Optional[uuid.UUID]):
+        self.slug = slug
+        self.scope_type = scope_type
+        self.scope_id = scope_id
+        scope_label = scope_type if scope_id is None else f"{scope_type}:{scope_id}"
+        super().__init__(
+            f"Slug '{slug}' already exists in {scope_label}. "
+            "Override final_slug, or have the contributor edit the existing page instead."
+        )
 
 
 async def approve_draft(
@@ -738,45 +761,99 @@ async def approve_draft(
     reviewer_note: Optional[str] = None,
     edited_content_md: Optional[str] = None,
     allow_conflict: bool = False,
+    metadata_overrides: Optional[dict] = None,
 ) -> WikiPage:
     """
     Approve a pending draft. Writes the final content to wiki_pages.content_md,
     creates a revision, and marks the draft approved.
     If edited_content_md is provided, that is used instead of the original draft content.
 
-    Raises DraftConflictError when the draft was authored against an older
-    page version than the current one, unless `allow_conflict=True` (caller
-    confirmed they want to overwrite) or `edited_content_md` is supplied
-    (reviewer has already produced a reconciled version).
+    For draft_kind='create' the page is materialised from
+    `draft.suggested_metadata` (or the reviewer-supplied `metadata_overrides`)
+    using `apply_create`. The reviewer may override slug / title / page_type /
+    knowledge_type_slugs before commit.
+
+    Raises DraftConflictError when an edit draft was authored against an older
+    page version than the current one, unless `allow_conflict=True` or
+    `edited_content_md` is supplied. Raises CreateDraftSlugConflict when a
+    create draft's chosen slug already exists in the target scope.
     """
-    page = await session.get(WikiPage, draft.page_id)
-    if page is None:
-        raise ValueError(f"Wiki page {draft.page_id} not found")
-
-    if (
-        not allow_conflict
-        and edited_content_md is None
-        and draft.base_version is not None
-        and page.version is not None
-        and draft.base_version < page.version
-    ):
-        raise DraftConflictError(page.version, draft.base_version)
-
     final_content = edited_content_md.strip() if edited_content_md else draft.content_md
-    page.content_md = final_content
-    page.version = (page.version or 1) + 1
-    await session.flush()
-    await refresh_links(session, page.id, page.slug, final_content)
 
-    session.add(WikiPageRevision(
-        page_id=page.id,
-        version=page.version,
-        content_md=final_content,
-        change_type="draft_approved",
-        draft_id=draft.id,
-        changed_by_id=reviewer_id,
-        change_note=reviewer_note,
-    ))
+    if draft.draft_kind == "create":
+        meta = dict(draft.suggested_metadata or {})
+        overrides = metadata_overrides or {}
+        slug = (overrides.get("final_slug") or meta.get("slug") or "").strip()
+        title = (overrides.get("final_title") or meta.get("title") or "").strip()
+        page_type = overrides.get("final_page_type") or meta.get("page_type") or "concept"
+        kt_slugs = (
+            overrides.get("final_knowledge_type_slugs")
+            if overrides.get("final_knowledge_type_slugs") is not None
+            else meta.get("knowledge_type_slugs") or []
+        )
+        scope_type = meta.get("scope_type") or "global"
+        scope_id_raw = meta.get("scope_id")
+        try:
+            scope_id = uuid.UUID(scope_id_raw) if isinstance(scope_id_raw, str) else scope_id_raw
+        except ValueError:
+            scope_id = None
+
+        if not slug or slug in (INDEX_SLUG, LOG_SLUG):
+            raise ValueError(f"Invalid slug for new page: '{slug}'")
+        if not title:
+            raise ValueError("Title is required to materialise a new page")
+
+        existing = await get_page_by_slug(session, slug, scope_type=scope_type, scope_id=scope_id)
+        if existing is not None:
+            raise CreateDraftSlugConflict(slug, scope_type, scope_id)
+
+        page = await apply_create(
+            session,
+            slug=slug, title=title, page_type=page_type,
+            content_md=final_content, summary="",
+            knowledge_type_slugs=list(kt_slugs), source_ids=[],
+            scope_type=scope_type, scope_id=scope_id,
+        )
+        # Tag the create-approval revision with reviewer context.
+        session.add(WikiPageRevision(
+            page_id=page.id,
+            version=page.version,
+            content_md=final_content,
+            change_type="draft_approved_create",
+            draft_id=draft.id,
+            changed_by_id=reviewer_id,
+            change_note=reviewer_note,
+        ))
+        # Backfill draft.page_id so subsequent UI reads can join cleanly.
+        draft.page_id = page.id
+    else:
+        page = await session.get(WikiPage, draft.page_id) if draft.page_id else None
+        if page is None:
+            raise ValueError(f"Wiki page {draft.page_id} not found")
+
+        if (
+            not allow_conflict
+            and edited_content_md is None
+            and draft.base_version is not None
+            and page.version is not None
+            and draft.base_version < page.version
+        ):
+            raise DraftConflictError(page.version, draft.base_version)
+
+        page.content_md = final_content
+        page.version = (page.version or 1) + 1
+        await session.flush()
+        await refresh_links(session, page.id, page.slug, final_content)
+
+        session.add(WikiPageRevision(
+            page_id=page.id,
+            version=page.version,
+            content_md=final_content,
+            change_type="draft_approved",
+            draft_id=draft.id,
+            changed_by_id=reviewer_id,
+            change_note=reviewer_note,
+        ))
 
     draft.status = "approved"
     draft.reviewed_by_id = reviewer_id

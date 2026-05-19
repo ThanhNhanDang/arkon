@@ -80,6 +80,50 @@ class WikiDirectEditRequest(BaseModel):
         return v
 
 
+class WikiDirectCreateRequest(BaseModel):
+    slug: str
+    title: str
+    page_type: str = "concept"
+    knowledge_type_slugs: list[str] = []
+    scope_type: str = "global"
+    scope_id: Optional[uuid.UUID] = None
+    content_md: str
+    summary: str = ""
+
+    @field_validator("content_md")
+    @classmethod
+    def content_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("content_md must not be empty")
+        if len(v) > 50_000:
+            raise ValueError("content_md exceeds 50,000 character limit")
+        return v
+
+    @field_validator("slug")
+    @classmethod
+    def slug_format(cls, v: str) -> str:
+        v = v.strip()
+        if not v or v in (wiki_service.INDEX_SLUG, wiki_service.LOG_SLUG):
+            raise ValueError("slug must be non-empty and not reserved")
+        if any(c.isspace() for c in v):
+            raise ValueError("slug must not contain whitespace")
+        return v
+
+    @field_validator("page_type")
+    @classmethod
+    def page_type_known(cls, v: str) -> str:
+        if v not in wiki_service.PAGE_TYPES:
+            raise ValueError(f"page_type must be one of {sorted(wiki_service.PAGE_TYPES)}")
+        return v
+
+    @field_validator("scope_type")
+    @classmethod
+    def scope_known(cls, v: str) -> str:
+        if v not in ("global", "department", "project"):
+            raise ValueError("scope_type must be global, department, or project")
+        return v
+
+
 class WikiRevisionSummary(BaseModel):
     id: uuid.UUID
     version: int
@@ -350,6 +394,58 @@ async def get_wiki_log(
 ):
     page = await wiki_service.get_page_by_slug(db, wiki_service.LOG_SLUG)
     return {"content_md": page.content_md if page else ""}
+
+
+@router.post("/wiki/pages", response_model=WikiPageDetail, status_code=201)
+async def direct_create_wiki_page(
+    body: WikiDirectCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: Employee = Depends(get_current_user),
+):
+    """Direct create by an editor or admin. No review step.
+
+    Permission: workspace editor+ for project-scoped, wiki:write:all (or
+    admin) for global / department scope.
+    """
+    if user.role != "admin":
+        if body.scope_type == "project" and body.scope_id:
+            member_role = await get_workspace_role(db, user, body.scope_id)
+            if not member_role or not workspace_role_can(member_role, "editor"):
+                raise HTTPException(403, "Requires editor role or above in this workspace")
+        else:
+            perms = _get_user_permissions(user)
+            if "wiki:write:all" not in perms:
+                raise HTTPException(403, "Requires wiki:write:all permission to create global wiki pages")
+
+    existing = await wiki_service.get_page_by_slug(
+        db, body.slug, scope_type=body.scope_type, scope_id=body.scope_id,
+    )
+    if existing is not None:
+        raise HTTPException(
+            409,
+            f"Slug '{body.slug}' already exists in {body.scope_type}. Edit the existing page instead.",
+        )
+
+    page = await wiki_service.apply_create(
+        db,
+        slug=body.slug, title=body.title, page_type=body.page_type,
+        content_md=body.content_md, summary=body.summary,
+        knowledge_type_slugs=list(body.knowledge_type_slugs), source_ids=[],
+        scope_type=body.scope_type, scope_id=body.scope_id,
+    )
+    await log_audit(db, user, "create", "wiki_page", str(page.id), reason=f"direct create: {page.slug}")
+    await wiki_service.regenerate_index(db, scope_type=page.scope_type or "global", scope_id=page.scope_id)
+    await wiki_service.append_log(
+        db,
+        f"Created page: {page.title} ({page.slug}) by {user.name or user.email}",
+        scope_type=page.scope_type or "global", scope_id=page.scope_id,
+    )
+    await db.commit()
+    await db.refresh(page)
+
+    backlinks = await wiki_service.get_backlinks(db, page.slug, page.scope_type, page.scope_id)
+    outlinks = await wiki_service.get_outlinks(db, page.slug, page.scope_type or "global", page.scope_id)
+    return _detail(page, backlinks, outlinks)
 
 
 @router.put("/wiki/pages/{slug:path}", response_model=WikiPageDetail)

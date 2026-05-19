@@ -339,6 +339,7 @@ export default function WikiPageViewer() {
                 <div className="mb-6">
                   <WikiDraftBanner
                     drafts={drafts}
+                    currentContent={page.content_md}
                     onApproved={handleDraftApproved}
                     onRejected={handleDraftRejected}
                   />

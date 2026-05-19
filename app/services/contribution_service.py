@@ -46,6 +46,69 @@ from app.services.audit_service import log_audit
 from app.services.notification_service import NotificationType
 
 
+async def _run_ai_sync_and_enqueue(db, draft: WikiPageDraft) -> None:
+    """Run L1+L2 AI checks synchronously and enqueue the L3+L4 worker job.
+
+    Permissive: never raises out of this function — AI is best-effort and
+    must never break the contribution path. Skips entirely if the global
+    `ai_pre_review_enabled` config flag is set to "false".
+    """
+    from loguru import logger
+    try:
+        from app.services.config_service import ConfigService
+        cfg = ConfigService(db)
+        enabled = await cfg.get("ai_pre_review_enabled")
+        # Default ON. Only the literal string "false" disables it.
+        if enabled is not None and str(enabled).lower() == "false":
+            draft.ai_check_status = "skipped"
+            return
+    except Exception:
+        # Config service failure shouldn't break submit — proceed.
+        pass
+
+    try:
+        from app.services.ai_review import run_sync_checks
+        page = await db.get(WikiPage, draft.page_id) if draft.page_id else None
+        scope_type = page.scope_type if page else (
+            (draft.suggested_metadata or {}).get("scope_type") or "global"
+        )
+        scope_id_val = page.scope_id if page else (
+            (draft.suggested_metadata or {}).get("scope_id")
+        )
+        try:
+            scope_id = uuid.UUID(scope_id_val) if isinstance(scope_id_val, str) else scope_id_val
+        except (ValueError, AttributeError):
+            scope_id = None
+
+        results = await run_sync_checks(
+            db, content_md=draft.content_md,
+            self_slug=page.slug if page else (draft.suggested_metadata or {}).get("slug"),
+            self_page_id=draft.page_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        draft.ai_check_results = results
+        summary = results["summary"]
+        # Status reflects sync-only verdict until the worker fills in L3+L4.
+        if summary["fail"] > 0:
+            draft.ai_check_status = "failed"
+        elif summary["warn"] > 0:
+            draft.ai_check_status = "warned"
+        else:
+            draft.ai_check_status = "running"  # waiting for async layers
+    except Exception as e:
+        logger.warning(f"AI sync checks failed for draft {draft.id}: {e}")
+        draft.ai_check_status = "skipped"
+
+    # Enqueue async layers. Failure (Redis down) just leaves the sync verdict.
+    try:
+        from app.worker import get_arq_pool
+        pool = await get_arq_pool()
+        await pool.enqueue_job("ai_pre_review_draft_task", str(draft.id))
+    except Exception as e:
+        logger.warning(f"AI async enqueue failed for draft {draft.id}: {e}")
+
+
 class InvalidTransition(Exception):
     """Raised when an attempted state transition is not allowed."""
 
@@ -197,6 +260,11 @@ async def notify_submitted(
     actor: Employee,
 ) -> None:
     """Fire when a contribution first enters pending state."""
+    # Trigger AI pre-review on wiki drafts only — skill contributions have a
+    # different content model (file tree in MinIO) and aren't in scope yet.
+    if isinstance(obj, WikiPageDraft):
+        await _run_ai_sync_and_enqueue(db, obj)
+
     recipients = await adapter.reviewers(db, obj)
     await notification_service.notify_many(
         db,
@@ -258,13 +326,15 @@ async def resubmit_wiki_draft(
     if draft.author_id is not None and draft.author_id != author.id:
         raise InvalidTransition("Only the original author can resubmit this draft.")
 
-    # Snapshot the state being replaced.
+    # Snapshot the state being replaced — including the AI verdict so the
+    # reviewer can compare AI checks across rounds.
     db.add(WikiDraftRound(
         draft_id=draft.id,
         round_no=draft.revision_round or 0,
         content_md=draft.content_md,
         author_note=draft.note,
         reviewer_return_note=draft.last_returned_note,
+        ai_check_results=draft.ai_check_results,
         submitted_at=datetime.now(timezone.utc),
     ))
 
@@ -272,8 +342,13 @@ async def resubmit_wiki_draft(
     if author_note is not None:
         draft.note = author_note
     draft.last_returned_note = None
+    # Content changed — re-run AI from scratch on the new content.
+    draft.ai_check_status = "pending"
+    draft.ai_check_results = None
+    draft.ai_checked_at = None
     adapter.bump_revision_round(draft)
     adapter.set_status(draft, "pending")
+    await _run_ai_sync_and_enqueue(db, draft)
 
     await log_audit(
         db, author, "resubmit", adapter.artifact_type, str(draft.id),

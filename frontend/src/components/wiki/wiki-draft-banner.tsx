@@ -4,38 +4,71 @@ import React from "react";
 import { api } from "@/lib/api";
 import { DraftResponse } from "@/types/wiki";
 import { WikiContent } from "./wiki-content";
+import { WikiDraftDiff } from "./wiki-draft-diff";
+import { WikiAiCheckPanel } from "./wiki-ai-check-panel";
 import { Button } from "@/components/ui/button";
 
 type Props = {
   drafts: DraftResponse[];
+  /** Current content of the parent page, used for the diff tab. */
+  currentContent?: string;
   onApproved: (draftId: string) => void;
   onRejected: (draftId: string) => void;
   onChangesRequested?: (draftId: string) => void;
 };
 
 type ReviewerAction = "approve" | "reject" | "request_changes";
+type BannerTab = "diff" | "proposed" | "current";
 
 const MIN_NOTE_LENGTH = 20;
+const AI_POLL_INTERVAL_MS = 3000;
 
 export function WikiDraftBanner({
   drafts,
+  currentContent = "",
   onApproved,
   onRejected,
   onChangesRequested,
 }: Props) {
   const [idx, setIdx] = React.useState(0);
-  const [tab, setTab] = React.useState<"proposed" | "current">("proposed");
+  const [tab, setTab] = React.useState<BannerTab>("diff");
   const [actionMode, setActionMode] = React.useState<ReviewerAction | null>(null);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [liveDraft, setLiveDraft] = React.useState<DraftResponse | null>(null);
 
-  const draft = drafts[idx];
+  const baseDraft = drafts[idx];
+  const draft = liveDraft && baseDraft && liveDraft.id === baseDraft.id ? liveDraft : baseDraft;
   if (!draft) return null;
 
+  const isCreate = draft.draft_kind === "create";
   const isNeedsRevision = draft.status === "needs_revision";
   const isWithdrawn = draft.status === "withdrawn";
   const hasConflict = draft.has_conflict;
+  const aiRunning = draft.ai_check_status === "pending" || draft.ai_check_status === "running";
+
+  // Reset live snapshot when the user pages to a different draft.
+  React.useEffect(() => {
+    setLiveDraft(null);
+  }, [baseDraft?.id]);
+
+  // Poll the single draft while AI checks are still running.
+  React.useEffect(() => {
+    if (!draft.id || !aiRunning) return;
+    const id = setInterval(async () => {
+      try {
+        const fresh = await api<DraftResponse>(`/api/wiki/drafts/${draft.id}`);
+        setLiveDraft(fresh);
+        if (fresh.ai_check_status !== "pending" && fresh.ai_check_status !== "running") {
+          clearInterval(id);
+        }
+      } catch {
+        /* silent — next tick retries */
+      }
+    }, AI_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [draft.id, aiRunning]);
 
   const total = drafts.length;
 
@@ -201,9 +234,29 @@ export function WikiDraftBanner({
         )}
       </div>
 
+      {/* Suggested metadata (create drafts only) */}
+      {isCreate && draft.suggested_metadata && (
+        <div className={`px-4 pt-3 text-xs ${palette.muted} space-y-0.5`}>
+          <p>
+            <span className="font-medium">Slug:</span> <code>{draft.suggested_metadata.slug}</code> ·{" "}
+            <span className="font-medium">Type:</span> {draft.suggested_metadata.page_type} ·{" "}
+            <span className="font-medium">Scope:</span> {draft.suggested_metadata.scope_type}
+          </p>
+          {!!draft.suggested_metadata.knowledge_type_slugs?.length && (
+            <p>
+              <span className="font-medium">Tags:</span>{" "}
+              {draft.suggested_metadata.knowledge_type_slugs.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Tab toggle */}
       <div className="flex gap-1 px-4 pt-3">
-        {(["proposed", "current"] as const).map((t) => (
+        {(isCreate
+          ? (["proposed"] as const)
+          : (["diff", "proposed", "current"] as const)
+        ).map((t) => (
           <button
             key={t}
             type="button"
@@ -212,21 +265,38 @@ export function WikiDraftBanner({
               tab === t ? palette.chip : palette.chipHover
             }`}
           >
-            {t === "proposed" ? "Proposed" : "Current page"}
+            {t === "proposed" ? "Proposed" : t === "current" ? "Current page" : "Diff"}
           </button>
         ))}
       </div>
 
       {/* Content preview */}
       <div className="px-4 py-3 max-h-72 overflow-y-auto">
-        {tab === "proposed" ? (
+        {tab === "diff" && !isCreate ? (
+          <WikiDraftDiff
+            oldText={currentContent}
+            newText={draft.content_md}
+            mode="unified"
+            contextLines={3}
+          />
+        ) : tab === "proposed" || isCreate ? (
           draft.content_md.trim() ? (
             <WikiContent markdown={draft.content_md} />
           ) : (
             <p className={`text-sm ${palette.muted} italic`}>Empty content.</p>
           )
-        ) : null}
+        ) : (
+          <div className="text-xs">
+            <WikiContent markdown={currentContent || "_(empty page)_"} />
+          </div>
+        )}
       </div>
+
+      {/* AI pre-review summary */}
+      <WikiAiCheckPanel
+        status={draft.ai_check_status}
+        results={draft.ai_check_results}
+      />
 
       {/* Reject / Request-changes note field */}
       {actionMode === "reject" || actionMode === "request_changes" ? (

@@ -1414,3 +1414,209 @@ def register_tools(mcp: FastMCP):
             await session.commit()
 
         return f"Draft `{draft_id}` withdrawn."
+
+    # =========================================================================
+    # Tier 6 — Create new pages (propose for contributors, direct for editors)
+    # =========================================================================
+
+    @mcp.tool()
+    @logged_tool("propose_wiki_create", query_arg="slug")
+    async def propose_wiki_create(
+        slug: str,
+        title: str,
+        content_md: str,
+        page_type: str = "concept",
+        knowledge_type_slugs: Optional[list[str]] = None,
+        scope_type: str = "global",
+        scope_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> str:
+        """
+        Propose a brand new wiki page for review. Contributor+ may file.
+        The page is materialised when an editor approves the draft.
+
+        Use search_wiki() first to check whether a similar page already
+        exists — proposing duplicates wastes reviewer time.
+
+        Args:
+            slug: Unique URL slug, no whitespace, not _index or _log.
+            title: Display title.
+            content_md: Full Markdown content (max 50,000 chars).
+            page_type: One of entity | concept | source | topic.
+            knowledge_type_slugs: KB taxonomy tags (controls RBAC visibility).
+            scope_type: "global" | "department" | "project".
+            scope_id: Required UUID when scope_type is department or project.
+            note: One-line description of why this page should exist.
+        """
+        import uuid as _uuid
+
+        from app.database import async_session_factory
+        from app.database.models import Employee
+        from app.services import contribution_service, wiki_service
+        from app.services.contribution_service import wiki_draft_adapter
+
+        identity, err = await _get_identity()
+        if err:
+            return err
+        assert identity is not None
+
+        if not slug or not title or not content_md.strip():
+            return "Error: slug, title, and content_md are required."
+        if slug in ("_index", "_log"):
+            return "Error: '_index' and '_log' are reserved slugs."
+        if len(content_md) > 50_000:
+            return "Error: content_md exceeds 50,000 character limit."
+        if any(c.isspace() for c in slug):
+            return "Error: slug must not contain whitespace."
+        if page_type not in wiki_service.PAGE_TYPES:
+            return f"Error: page_type must be one of {sorted(wiki_service.PAGE_TYPES)}."
+        if scope_type not in ("global", "department", "project"):
+            return "Error: scope_type must be global, department, or project."
+
+        sid: Optional[_uuid.UUID] = None
+        if scope_id:
+            try:
+                sid = _uuid.UUID(scope_id)
+            except ValueError:
+                return "Error: scope_id must be a valid UUID."
+
+        async with async_session_factory() as session:
+            employee = await session.get(Employee, identity.employee_id)
+            if not employee:
+                return "Error: employee not found."
+
+            existing = await wiki_service.get_page_by_slug(
+                session, slug, scope_type=scope_type, scope_id=sid,
+            )
+            if existing is not None:
+                return (
+                    f"Error: page '{slug}' already exists in {scope_type}. "
+                    "Use propose_wiki_edit() to suggest changes instead."
+                )
+
+            suggested_metadata = {
+                "slug": slug, "title": title, "page_type": page_type,
+                "knowledge_type_slugs": list(knowledge_type_slugs or []),
+                "scope_type": scope_type,
+                "scope_id": str(sid) if sid else None,
+            }
+            draft = await wiki_service.create_draft(
+                session,
+                page_id=None,
+                author_id=employee.id,
+                content_md=content_md.strip(),
+                note=note,
+                source="mcp_claude_desktop",
+                base_version=None,
+                draft_kind="create",
+                suggested_metadata=suggested_metadata,
+            )
+            await contribution_service.notify_submitted(
+                session, wiki_draft_adapter, draft, employee,
+            )
+            await session.commit()
+
+        return (
+            f"Create draft submitted for new page `{slug}` "
+            f"(Draft ID: `{draft.id}`).\nAn editor will review and approve. "
+            f"Note: {note or '(none)'}"
+        )
+
+    @mcp.tool()
+    @logged_tool("create_wiki_page", query_arg="slug")
+    async def create_wiki_page(
+        slug: str,
+        title: str,
+        content_md: str,
+        page_type: str = "concept",
+        knowledge_type_slugs: Optional[list[str]] = None,
+        scope_type: str = "global",
+        scope_id: Optional[str] = None,
+    ) -> str:
+        """
+        Directly create a new wiki page. Editor/admin only — no review step.
+
+        Use propose_wiki_create() instead if you only have contributor access.
+
+        Args:
+            slug: Unique URL slug.
+            title: Display title.
+            content_md: Full Markdown content.
+            page_type: entity | concept | source | topic.
+            knowledge_type_slugs: KB taxonomy tags.
+            scope_type: "global" | "department" | "project".
+            scope_id: UUID when scope_type is department or project.
+        """
+        import uuid as _uuid
+
+        from app.database import async_session_factory
+        from app.database.models import Employee
+        from app.services import wiki_service
+
+        identity, err = await _get_identity()
+        if err:
+            return err
+        assert identity is not None
+
+        if not slug or not title or not content_md.strip():
+            return "Error: slug, title, and content_md are required."
+        if slug in ("_index", "_log"):
+            return "Error: '_index' and '_log' are reserved slugs."
+        if page_type not in wiki_service.PAGE_TYPES:
+            return f"Error: page_type must be one of {sorted(wiki_service.PAGE_TYPES)}."
+        if scope_type not in ("global", "department", "project"):
+            return "Error: scope_type must be global, department, or project."
+
+        sid: Optional[_uuid.UUID] = None
+        if scope_id:
+            try:
+                sid = _uuid.UUID(scope_id)
+            except ValueError:
+                return "Error: scope_id must be a valid UUID."
+
+        async with async_session_factory() as session:
+            employee = await session.get(Employee, identity.employee_id)
+            if not employee:
+                return "Error: employee not found."
+
+            # Permission: editor+ in workspace, wiki:write:all globally, or admin.
+            if employee.role != "admin":
+                from app.services.permission_engine import (
+                    _get_user_permissions,
+                    get_workspace_role,
+                    workspace_role_can,
+                )
+                if scope_type == "project" and sid:
+                    role = await get_workspace_role(session, employee, sid)
+                    if not role or not workspace_role_can(role, "editor"):
+                        return f"Error: requires editor role or above in this workspace."
+                else:
+                    perms = _get_user_permissions(employee)
+                    if "wiki:write:all" not in perms:
+                        return "Error: requires wiki:write:all permission. Use propose_wiki_create() instead."
+
+            existing = await wiki_service.get_page_by_slug(
+                session, slug, scope_type=scope_type, scope_id=sid,
+            )
+            if existing is not None:
+                return f"Error: page '{slug}' already exists in {scope_type}."
+
+            page = await wiki_service.apply_create(
+                session,
+                slug=slug, title=title, page_type=page_type,
+                content_md=content_md.strip(), summary="",
+                knowledge_type_slugs=list(knowledge_type_slugs or []),
+                source_ids=[],
+                scope_type=scope_type, scope_id=sid,
+            )
+            await wiki_service.regenerate_index(
+                session, scope_type=scope_type, scope_id=sid,
+            )
+            await wiki_service.append_log(
+                session,
+                f"Created page: {title} ({slug}) via MCP by {employee.name or employee.email}",
+                scope_type=scope_type, scope_id=sid,
+            )
+            await session.commit()
+
+        return f"Page `{slug}` created at v{page.version}."

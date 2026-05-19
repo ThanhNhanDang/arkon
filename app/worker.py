@@ -1015,6 +1015,18 @@ async def caption_images_task(ctx: dict, source_id: str):
     logger.info(f"caption_images_task: enqueued ingest_map_reduce_task for {source_id}")
 
 
+async def ai_pre_review_draft_task(ctx: dict, draft_id: str) -> None:
+    """Run the async (L3 + L4) layers of the AI pre-review on a wiki draft.
+
+    L1 + L2 already ran synchronously when the draft was created; this job
+    fills in semantic similarity + LLM judgment and updates ai_check_status.
+    Permissive: never blocks the draft regardless of verdict.
+    """
+    from app.services.ai_review import run_async_checks
+    _ = ctx
+    await run_async_checks(draft_id)
+
+
 class WorkerSettings:
     """arq worker configuration."""
 
@@ -1026,6 +1038,7 @@ class WorkerSettings:
         ingest_refine_task,
         regenerate_plan_task,
         reembed_all_pages_task,
+        ai_pre_review_draft_task,
     ]
     redis_settings = _get_redis_settings()
     max_jobs = settings.worker_max_jobs

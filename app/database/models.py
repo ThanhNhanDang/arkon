@@ -356,9 +356,15 @@ class WikiPageDraft(Base):
     __tablename__ = "wiki_page_drafts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    page_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("wiki_pages.id", ondelete="CASCADE"), nullable=False
+    # NULL only when draft_kind='create' — the page is materialised at approval.
+    page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wiki_pages.id", ondelete="CASCADE"), nullable=True
     )
+    # 'edit' (default): modifies the page referenced by page_id.
+    # 'create': proposes a brand new page; suggested_metadata holds slug,
+    # title, page_type, knowledge_type_slugs, scope_type, scope_id.
+    draft_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="edit")
+    suggested_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     author_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
     )
@@ -371,6 +377,13 @@ class WikiPageDraft(Base):
     revision_round: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Reviewer's note when sending the draft back for revisions.
     last_returned_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # pending | running | passed | warned | failed — set by AI pre-review worker.
+    ai_check_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # See app/services/ai_review/runner.py for the JSON shape.
+    ai_check_results: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    ai_checked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
     # pending | needs_revision | withdrawn | approved | rejected
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     # web_ui | mcp_claude_desktop | mcp_claude_code | mcp_other | api_direct
@@ -450,6 +463,9 @@ class WikiDraftRound(Base):
     content_md: Mapped[str] = mapped_column(Text, nullable=False)
     author_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reviewer_return_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # AI verdict at the time this round was sent back — frozen so reviewers
+    # can compare AI checks across rounds.
+    ai_check_results: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

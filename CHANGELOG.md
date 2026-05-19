@@ -5,6 +5,90 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.0] — 2026-05-19
+
+Contribute / review vision pass. Adds an AI pre-review layer that annotates
+every wiki draft (PII, broken wikilinks, duplicates, tone / factual sniff),
+a side-by-side diff view in the reviewer banner, and the ability for any
+contributor to propose brand-new wiki pages. Permissive throughout — the AI
+flags, the human decides.
+
+### Added
+
+- **AI pre-review (permissive)** for wiki drafts. Four layers run on every
+  submit / resubmit:
+  - **L1 regex (sync)** — emails, phone numbers, national IDs, AWS / GitHub /
+    Anthropic / Google API keys, JWTs, private-key blocks. Suppressible
+    inline with `<!-- pii-allow: <reason> -->` markers above the match.
+  - **L2 structural (sync)** — broken wikilinks, self-links, length sanity,
+    non-incremental heading jumps, unclosed code fences.
+  - **L3 semantic (async)** — embedding similarity vs existing pages to
+    flag potential duplicates (>0.85 cosine).
+  - **L4 LLM judgment (async)** — tone consistency, page_type scope fit,
+    factual concerns. Uses the admin-configured LLM via `ProviderRegistry`.
+  - Results land in `wiki_page_drafts.ai_check_results` JSONB with a
+    `summary` and per-check entries. Status flows
+    `pending` → `running` → `passed` / `warned` / `failed`. **Nothing
+    blocks submission** — every flag is advisory. Disable globally with
+    the `ai_pre_review_enabled` config key.
+- **Async worker task** `ai_pre_review_draft_task` registered in
+  `WorkerSettings.functions`. L1/L2 run inside the request; L3/L4 are
+  enqueued and update the draft when done.
+- **Re-run on resubmit** — every author resubmission clears the AI state,
+  re-runs L1+L2 synchronously, re-enqueues L3+L4, and snapshots the prior
+  round's verdict to `wiki_draft_rounds.ai_check_results` so reviewers can
+  compare across rounds.
+- **Unified diff view** in the reviewer banner using `jsdiff`. New “Diff”
+  tab (default) renders unified ± lines with word-level highlighting for
+  changed lines and collapses long unchanged runs. Edit drafts only —
+  create drafts have nothing to diff against.
+- **AI check panel** appended below the diff/preview area. Collapsed shows
+  a one-line summary chip + tally; expanded lists every warn / fail check
+  with layer, message, and up to 5 example matches.
+- **`propose_wiki_create` (REST + MCP)** lets any contributor propose a
+  brand-new wiki page. The draft carries the suggested
+  `{slug, title, page_type, knowledge_type_slugs, scope_type, scope_id}`;
+  the parent page is materialised at approve time.
+- **`create_wiki_page` (REST + MCP)** lets workspace editors and global
+  `wiki:write:all` holders create pages directly without going through
+  review.
+- **Reviewer-side metadata overrides** on approve — `final_slug`,
+  `final_title`, `final_page_type`, `final_knowledge_type_slugs` —
+  applied when materialising a create draft. Slug collisions surface as
+  HTTP 409 with a clear hint.
+- **Polling for AI status** in the draft banner: while
+  `ai_check_status ∈ {pending, running}` the component polls the draft
+  every 3 seconds and refreshes the panel.
+
+### Changed
+
+- `WikiPageDraft.page_id` is now nullable — create drafts have no parent
+  page until approval materialises one.
+- `_can_review_draft` replaces page-keyed reviewer checks across all
+  draft endpoints so create drafts route correctly to global / workspace
+  reviewers without requiring an existing page.
+- The `arkon-edit` skill documents the create flow + AI pre-review +
+  `pii-allow` markers; `arkon-review` documents AI verdicts and metadata
+  overrides on create-draft approval.
+
+### Migrations
+
+- `025_ai_pre_review_and_create_drafts.py` — adds
+  `ai_check_status` / `ai_check_results` / `ai_checked_at` to
+  `wiki_page_drafts`; adds `ai_check_results` to `wiki_draft_rounds`;
+  adds `draft_kind` and `suggested_metadata` to `wiki_page_drafts`;
+  makes `wiki_page_drafts.page_id` nullable.
+
+### Deferred to 0.7
+
+- Gap-driven page-creation suggestions (mining `mcp_query_log` zero-result
+  searches for topics worth seeding pages from).
+- Email / webhook notification channels (in-app only for now).
+- Bulk-approve UI and a dedicated queue page.
+- Trust / reputation signals and expertise-based reviewer routing.
+
+---
+
 ## [0.5.0] — 2026-05-19
 
 Contribute / review hardening, foundation pass. Adds a closed feedback loop

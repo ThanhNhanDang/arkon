@@ -64,6 +64,46 @@ reject_draft(draft_id, reviewer_note="clear reason why — required")
 
 ---
 
+## Approving a create draft
+
+When the draft was filed via `propose_wiki_create`, it has `draft_kind: "create"`
+and no page exists yet — approval materialises a new page using the
+contributor's suggested metadata. The reviewer may override before commit
+via the REST endpoint body (in the portal UI):
+
+- `final_slug` — adjust the URL slug
+- `final_title` — adjust the display title
+- `final_page_type` — change page_type
+- `final_knowledge_type_slugs` — fix the taxonomy tags (matters for RBAC)
+
+Why adjust metadata? RBAC visibility is driven by `knowledge_type_slugs`;
+slug shapes the URL forever; page_type affects how the page renders in the
+index. Contributors are often not aware of the conventions — quietly fixing
+these at approve is cheaper than asking them to resubmit.
+
+If the slug already exists in the target scope, approval returns
+`409 slug_conflict` — override `final_slug` or send the draft back with a
+`request_changes` note explaining why.
+
+---
+
+## AI pre-review signals
+
+Every draft carries an AI verdict (`ai_check_status` plus a list of checks):
+
+- **`passed`** — no warnings. Most likely safe to approve after a quick read.
+- **`warned`** — soft issues: broken wikilinks, possible duplicates, tone
+  drift, scope-fit doubts. Read them; some are noise, some matter.
+- **`failed`** — at least one PII / secret regex match. Read each match
+  carefully. The contributor may have meant to include it (look for a
+  `<!-- pii-allow: ... -->` marker above the match). If not, that's a
+  request_changes situation.
+
+The AI never blocks approval — it's a checklist, not a gate. Trust your own
+judgment.
+
+---
+
 ## Review Checklist
 
 Before approving, verify:
