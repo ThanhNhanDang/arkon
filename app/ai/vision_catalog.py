@@ -19,6 +19,8 @@ class VisionModelSpec:
     cost_per_1m_input_tokens: Optional[float]
     cost_per_image: Optional[float]  # USD per image when provider charges flat
     notes: Optional[str] = None
+    default_base_url: Optional[str] = None  # Override the SDK default endpoint
+                                            # (proxies, Azure, …)
 
 
 VISION_CATALOG: dict[str, VisionModelSpec] = {
@@ -74,6 +76,21 @@ VISION_CATALOG: dict[str, VisionModelSpec] = {
         label="GPT-4o Mini",
         cost_per_1m_input_tokens=0.15,
         cost_per_image=None,
+    ),
+    # --- Antigravity proxy (OpenAI-compatible local gateway) ---
+    # Provider="openai" routes through OpenAIVision, which honors base_url.
+    # gpt-4o vision is broken on the proxy (upstream Gemini safety_settings
+    # mismatch); use gemini-3-flash for vision captioning instead.
+    "antigravity/gemini-3-flash": VisionModelSpec(
+        id="antigravity/gemini-3-flash",
+        provider="openai",
+        model_id="gemini-3-flash",
+        max_image_size_mb=20,
+        label="Antigravity · Gemini 3 Flash (vision)",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_image=None,
+        notes="Routed via local Antigravity OpenAI-compatible proxy.",
+        default_base_url="http://host.docker.internal:8045/v1",
     ),
 }
 

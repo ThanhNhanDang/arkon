@@ -267,7 +267,11 @@ class ProviderRegistry:
         spec = get_spec(spec_id)
 
         api_key = await svc.get("llm_api_key") or ""
-        base_url = await svc.get("llm_base_url")
+        # Resolution order: explicit DB setting overrides catalog default so
+        # operators can still redirect even catalogued proxy/Groq entries.
+        base_url = await svc.get("llm_base_url") or getattr(
+            spec, "default_base_url", None
+        )
 
         return ProviderConfig(
             provider=ProviderType(spec.provider),
@@ -290,7 +294,9 @@ class ProviderRegistry:
         spec = get_spec(spec_id)
 
         api_key = await svc.get("vision_api_key") or ""
-        base_url = await svc.get("vision_base_url")
+        base_url = await svc.get("vision_base_url") or getattr(
+            spec, "default_base_url", None
+        )
 
         return ProviderConfig(
             provider=ProviderType(spec.provider),
