@@ -33,6 +33,8 @@ def _is_sensitive(key: str) -> bool:
             "smtp_password", "webhook_secret",
         }
         or key.startswith("embedding_api_key__")  # per-provider keys
+        or key.startswith("llm_api_key__")        # per-spec LLM keys
+        or key.startswith("vision_api_key__")     # per-spec vision keys
     )
 
 
@@ -55,6 +57,19 @@ ACTIVE_VISION_MODEL_KEY = "active_vision_model_spec_id"
 # previously configured key. Encrypted at rest.
 def embedding_api_key_for(provider: str) -> str:
     return f"embedding_api_key__{provider}"
+
+
+# Per-spec LLM / vision API keys: `llm_api_key__<spec_id>`.
+# Needed because Antigravity proxy and Groq both use provider="openai" but
+# require completely different API keys. Falls back to `llm_api_key` when the
+# per-spec entry is missing. Encrypted at rest via the `llm_api_key__` prefix
+# in _is_sensitive().
+def llm_api_key_for(spec_id: str) -> str:
+    return f"llm_api_key__{spec_id}"
+
+
+def vision_api_key_for(spec_id: str) -> str:
+    return f"vision_api_key__{spec_id}"
 
 
 # All config keys that can be managed via UI

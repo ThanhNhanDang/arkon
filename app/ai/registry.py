@@ -258,7 +258,7 @@ class ProviderRegistry:
         Raises ValueError if no LLM is configured at all.
         """
         from app.ai.llm_catalog import get_spec
-        from app.services.config_service import ConfigService
+        from app.services.config_service import ConfigService, llm_api_key_for
 
         svc = ConfigService(self.db)
         spec_id = await self.get_active_llm_spec_id()
@@ -266,7 +266,14 @@ class ProviderRegistry:
             raise ValueError("No active LLM. Pick one in Settings → LLM.")
         spec = get_spec(spec_id)
 
-        api_key = await svc.get("llm_api_key") or ""
+        # Per-spec key overrides the shared one. Required when two specs share
+        # the same provider (e.g. Antigravity proxy vs Groq both provider=openai)
+        # but need different credentials.
+        api_key = (
+            await svc.get(llm_api_key_for(spec.id))
+            or await svc.get("llm_api_key")
+            or ""
+        )
         # Resolution order: explicit DB setting overrides catalog default so
         # operators can still redirect even catalogued proxy/Groq entries.
         base_url = await svc.get("llm_base_url") or getattr(
@@ -285,7 +292,7 @@ class ProviderRegistry:
     async def _load_vision_config(self) -> ProviderConfig:
         """Build a ProviderConfig for the active vision model from VISION_CATALOG."""
         from app.ai.vision_catalog import get_spec
-        from app.services.config_service import ConfigService
+        from app.services.config_service import ConfigService, vision_api_key_for
 
         svc = ConfigService(self.db)
         spec_id = await self.get_active_vision_spec_id()
@@ -293,7 +300,11 @@ class ProviderRegistry:
             raise ValueError("No active vision model. Pick one in Settings → Vision.")
         spec = get_spec(spec_id)
 
-        api_key = await svc.get("vision_api_key") or ""
+        api_key = (
+            await svc.get(vision_api_key_for(spec.id))
+            or await svc.get("vision_api_key")
+            or ""
+        )
         base_url = await svc.get("vision_base_url") or getattr(
             spec, "default_base_url", None
         )
