@@ -72,6 +72,20 @@ def vision_api_key_for(spec_id: str) -> str:
     return f"vision_api_key__{spec_id}"
 
 
+# Dynamic config keys: whitelisted by prefix rather than by exact value because
+# the per-provider / per-spec keys depend on which catalog entries the operator
+# wires up.
+_DYNAMIC_KEY_PREFIXES = (
+    "embedding_api_key__",
+    "llm_api_key__",
+    "vision_api_key__",
+)
+
+
+def _is_allowed_dynamic_key(key: str) -> bool:
+    return any(key.startswith(p) for p in _DYNAMIC_KEY_PREFIXES)
+
+
 # All config keys that can be managed via UI
 ALL_CONFIG_KEYS = [
     # --- Embedding (whitelist-driven) ---
@@ -213,7 +227,7 @@ class ConfigService:
         """Set multiple config values at once. Returns {key: success}."""
         results = {}
         for key, value in updates.items():
-            if key not in ALL_CONFIG_KEYS:
+            if key not in ALL_CONFIG_KEYS and not _is_allowed_dynamic_key(key):
                 results[key] = False
                 continue
             # Skip masked values (user didn't change them)
