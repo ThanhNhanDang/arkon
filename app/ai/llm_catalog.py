@@ -32,6 +32,8 @@ class LLMModelSpec:
     cost_per_1m_input_tokens: Optional[float]   # USD per 1M input tokens
     cost_per_1m_output_tokens: Optional[float]  # USD per 1M output tokens
     notes: Optional[str] = None
+    default_base_url: Optional[str] = None  # Override the SDK default endpoint
+                                            # (proxies, Groq, Together, Azure, …)
 
 
 # All entries here must be reachable via their provider's SDK. When adding a
@@ -175,6 +177,110 @@ LLM_CATALOG: dict[str, LLMModelSpec] = {
         label="GPT-4o Mini (128k)",
         cost_per_1m_input_tokens=0.15,
         cost_per_1m_output_tokens=0.60,
+    ),
+    # --- Antigravity proxy (OpenAI-compatible local gateway) ---
+    # Provider must be "openai" so OpenAILLM is used (it honors base_url).
+    # default_base_url assumes the proxy runs on the Docker host at port 8045;
+    # override via the `llm_base_url` setting if your proxy lives elsewhere.
+    "antigravity/gemini-3-flash": LLMModelSpec(
+        id="antigravity/gemini-3-flash",
+        provider="openai",
+        model_id="gemini-3-flash",
+        context_window_tokens=1_048_576,
+        max_output_tokens=65_536,
+        supports_tools=True,
+        supports_vision=True,
+        label="Antigravity · Gemini 3 Flash",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_1m_output_tokens=0.0,
+        notes="Routed via local Antigravity OpenAI-compatible proxy.",
+        default_base_url="http://host.docker.internal:8045/v1",
+    ),
+    "antigravity/gemini-3-pro": LLMModelSpec(
+        id="antigravity/gemini-3-pro",
+        provider="openai",
+        model_id="gemini-3-pro",
+        context_window_tokens=1_048_576,
+        max_output_tokens=65_536,
+        supports_tools=True,
+        supports_vision=True,
+        label="Antigravity · Gemini 3 Pro",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_1m_output_tokens=0.0,
+        notes="Routed via local Antigravity OpenAI-compatible proxy.",
+        default_base_url="http://host.docker.internal:8045/v1",
+    ),
+    "antigravity/claude-sonnet-4-6": LLMModelSpec(
+        id="antigravity/claude-sonnet-4-6",
+        provider="openai",
+        model_id="claude-sonnet-4-6",
+        context_window_tokens=200_000,
+        max_output_tokens=8_192,
+        supports_tools=True,
+        supports_vision=True,
+        label="Antigravity · Claude Sonnet 4.6",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_1m_output_tokens=0.0,
+        notes="Routed via local Antigravity OpenAI-compatible proxy.",
+        default_base_url="http://host.docker.internal:8045/v1",
+    ),
+    "antigravity/claude-opus-4-6": LLMModelSpec(
+        id="antigravity/claude-opus-4-6",
+        provider="openai",
+        model_id="claude-opus-4-6",
+        context_window_tokens=200_000,
+        max_output_tokens=8_192,
+        supports_tools=True,
+        supports_vision=True,
+        label="Antigravity · Claude Opus 4.6",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_1m_output_tokens=0.0,
+        notes="Routed via local Antigravity OpenAI-compatible proxy.",
+        default_base_url="http://host.docker.internal:8045/v1",
+    ),
+    # --- Groq (OpenAI-compatible cloud, very fast Llama inference) ---
+    # Requires a Groq API key configured as llm_api_key.
+    "groq/llama-3.3-70b-versatile": LLMModelSpec(
+        id="groq/llama-3.3-70b-versatile",
+        provider="openai",
+        model_id="llama-3.3-70b-versatile",
+        context_window_tokens=131_072,
+        max_output_tokens=32_768,
+        supports_tools=True,
+        supports_vision=False,
+        label="Groq · Llama 3.3 70B Versatile",
+        cost_per_1m_input_tokens=0.59,
+        cost_per_1m_output_tokens=0.79,
+        notes="High-throughput Llama on Groq. Tool calling supported.",
+        default_base_url="https://api.groq.com/openai/v1",
+    ),
+    "groq/llama-3.1-8b-instant": LLMModelSpec(
+        id="groq/llama-3.1-8b-instant",
+        provider="openai",
+        model_id="llama-3.1-8b-instant",
+        context_window_tokens=131_072,
+        max_output_tokens=8_192,
+        supports_tools=True,
+        supports_vision=False,
+        label="Groq · Llama 3.1 8B Instant",
+        cost_per_1m_input_tokens=0.05,
+        cost_per_1m_output_tokens=0.08,
+        notes="Cheapest Groq option. Good for simple extraction tasks.",
+        default_base_url="https://api.groq.com/openai/v1",
+    ),
+    "groq/gpt-oss-120b": LLMModelSpec(
+        id="groq/gpt-oss-120b",
+        provider="openai",
+        model_id="openai/gpt-oss-120b",
+        context_window_tokens=131_072,
+        max_output_tokens=32_768,
+        supports_tools=True,
+        supports_vision=False,
+        label="Groq · GPT-OSS 120B",
+        cost_per_1m_input_tokens=0.15,
+        cost_per_1m_output_tokens=0.75,
+        notes="OpenAI open-weights model on Groq. Strong reasoning.",
+        default_base_url="https://api.groq.com/openai/v1",
     ),
 }
 
