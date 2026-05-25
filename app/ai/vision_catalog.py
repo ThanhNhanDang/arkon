@@ -92,6 +92,19 @@ VISION_CATALOG: dict[str, VisionModelSpec] = {
         notes="Routed via local Antigravity OpenAI-compatible proxy.",
         default_base_url="http://host.docker.internal:8045/v1",
     ),
+    # --- Groq (OpenAI-compatible) ---
+    # Groq's only current vision model. Images must be >=2x2 pixels.
+    "groq/llama-4-scout-vision": VisionModelSpec(
+        id="groq/llama-4-scout-vision",
+        provider="openai",
+        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
+        max_image_size_mb=20,
+        label="Groq · Llama 4 Scout (vision)",
+        cost_per_1m_input_tokens=0.11,
+        cost_per_image=None,
+        notes="Groq's vision-capable Llama 4 Scout. Requires Groq API key.",
+        default_base_url="https://api.groq.com/openai/v1",
+    ),
 }
 
 
