@@ -80,6 +80,21 @@ EMBEDDING_CATALOG: dict[str, EmbeddingModelSpec] = {
         cost_per_1m_tokens=0.13,
         notes="Highest quality OpenAI embedding. ~6.5x cost of 3-small.",
     ),
+    # --- Ollama (self-hosted, OpenAI-compatible /v1) ---
+    # Uses the OpenAI provider class (honors `embedding_base_url`, which MUST
+    # be set, e.g. http://ollama-tunnel:11434/v1). dimension=768 maps to the
+    # existing wiki_page_embeddings_768 table. Ollama ignores the `dimensions`
+    # request param gracefully (verified). API key can be any non-empty value.
+    "ollama/nomic-embed-text": EmbeddingModelSpec(
+        id="ollama/nomic-embed-text",
+        provider="openai",
+        model_id="nomic-embed-text",
+        dimension=768,
+        max_input_tokens=2048,
+        label="Ollama · nomic-embed-text (768d, self-hosted)",
+        cost_per_1m_tokens=0.0,
+        notes="Self-hosted via Ollama. Requires embedding_base_url setting.",
+    ),
 }
 
 

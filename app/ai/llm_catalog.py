@@ -238,6 +238,25 @@ LLM_CATALOG: dict[str, LLMModelSpec] = {
         notes="Routed via local Antigravity OpenAI-compatible proxy.",
         default_base_url="http://host.docker.internal:8045/v1",
     ),
+    # --- Ollama (self-hosted, OpenAI-compatible /v1) ---
+    # Provider must be "openai" so OpenAILLM is used (it honors base_url).
+    # default_base_url targets the `ollama-tunnel` sidecar container (SSH
+    # tunnel to the GPU pod); override via `llm_base_url` if Ollama lives
+    # elsewhere. API key is ignored by Ollama - set any non-empty value.
+    "ollama/qwen2.5-14b": LLMModelSpec(
+        id="ollama/qwen2.5-14b",
+        provider="openai",
+        model_id="qwen2.5:14b",
+        context_window_tokens=32_768,
+        max_output_tokens=8_192,
+        supports_tools=True,
+        supports_vision=False,
+        label="Ollama · Qwen 2.5 14B (self-hosted)",
+        cost_per_1m_input_tokens=0.0,
+        cost_per_1m_output_tokens=0.0,
+        notes="Self-hosted via Ollama OpenAI-compatible /v1. Tool calling verified.",
+        default_base_url="http://ollama-tunnel:11434/v1",
+    ),
     # --- Groq (OpenAI-compatible cloud, very fast Llama inference) ---
     # Requires a Groq API key configured as llm_api_key.
     "groq/llama-3.3-70b-versatile": LLMModelSpec(
