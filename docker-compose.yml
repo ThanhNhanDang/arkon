@@ -137,6 +137,18 @@ services:
       api:
         condition: service_healthy
 
+  # Static file server for the public HTML guide + demo video.
+  # Mounts ./docs read-only; serves /guide.html and /videos/*, /images/*.
+  docs:
+    image: nginx:alpine
+    container_name: arkon_docs
+    restart: always
+    volumes:
+      - ./docs:/usr/share/nginx/html:ro
+      - ./docs/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3120:80"
+
 volumes:
   postgres_data:
   redis_data:
