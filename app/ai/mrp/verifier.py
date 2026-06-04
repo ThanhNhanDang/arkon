@@ -15,6 +15,7 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.mrp.timeouts import llm_timeout
 from app.ai.mrp.writer import PageWriteResult
 from app.ai.providers.base import EmbeddingProvider, LLMProvider
 from app.utils.progress import ProgressTracker
@@ -123,7 +124,7 @@ async def check_conflicts(
             try:
                 raw = await asyncio.wait_for(
                     llm.generate(prompt, system="You are a fact-checking assistant. Return only JSON.", temperature=0.0),
-                    timeout=30,
+                    timeout=llm_timeout(30),
                 )
                 from app.utils.text import parse_json_loose
                 result = parse_json_loose(raw)

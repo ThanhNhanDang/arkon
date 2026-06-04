@@ -20,6 +20,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.mrp.timeouts import llm_timeout
 from app.ai.providers.base import LLMProvider
 from app.utils.progress import ProgressTracker
 
@@ -30,7 +31,9 @@ from app.utils.progress import ProgressTracker
 CHUNK_TARGET_CHARS = 20_000
 OVERLAP_CHARS = 1_000
 MAX_MAP_CONCURRENCY = 6
-EXTRACT_TIMEOUT = 120  # seconds per extraction call
+# Seconds per extraction call; scaled by MRP_LLM_TIMEOUT_SCALE for slower
+# self-hosted backends (a 14B Ollama model can need >120s per chunk).
+EXTRACT_TIMEOUT = llm_timeout(120)
 OVERLAP_SEPARATOR = "[…context from previous section…]\n"
 
 
